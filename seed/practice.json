@@ -1,0 +1,38 @@
+{
+  "owner": { "displayName": "Edulet 도우미", "avatarColor": "#3b82f6" },
+  "board": {
+    "slug": "practice",
+    "title": "Edulet 연습장",
+    "description": "누구나 글을 올려 볼 수 있는 연습 보드예요. 두 창을 나란히 열고 실시간으로 함께 써 보세요.",
+    "format": "wall",
+    "wallpaper": "sunrise",
+    "font": "sans",
+    "colorScheme": "light",
+    "visibility": "link",
+    "linkAccess": "write",
+    "settings": { "reactions": "like", "comments": "on", "approval": false, "showAuthor": true, "newPostPosition": "top" },
+    "ageDays": 1
+  },
+  "sections": [],
+  "posts": [
+    {
+      "title": "여기에 첫 글을 남겨 보세요",
+      "body": "오른쪽 아래 **＋** 버튼을 눌러 글을 올려요.\n\n- 제목과 본문을 쓰고\n- 이미지·파일·링크를 붙이고\n- 카드 색을 바꿔 볼 수 있어요\n\n올린 글은 같은 보드를 보고 있는 모두에게 바로 나타나요.",
+      "color": "yellow"
+    },
+    {
+      "title": "형식을 바꿔 보세요",
+      "body": "상단의 ⚙ 설정에서 **벽 · 격자 · 스트림 · 선반 · 줄 · 캔버스 · 채팅** 중 하나를 고를 수 있어요. 같은 글이 형식만 바뀌어 보여요.",
+      "color": "blue"
+    },
+    {
+      "title": "링크도 붙일 수 있어요",
+      "body": "주소를 붙여 넣으면 제목과 대표 이미지를 가져와요. 유튜브 주소는 그 자리에서 재생돼요.",
+      "attachment": {
+        "kind": "link",
+        "url": "https://developer.mozilla.org/ko/",
+        "preview": { "title": "MDN Web Docs", "description": "웹 개발자를 위한 자료", "site": "developer.mozilla.org" }
+      }
+    }
+  ]
+}

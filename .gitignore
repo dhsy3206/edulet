@@ -1,0 +1,8 @@
+node_modules/
+data/
+*.log
+.DS_Store
+Thumbs.db
+.env
+coverage/
+e2e/out/

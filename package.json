@@ -1,0 +1,17 @@
+{
+  "name": "edulet",
+  "version": "0.1.0",
+  "description": "Padlet 스타일의 실시간 협업 게시판 — 교실·연수용 (의존성 0, Node 내장 SQLite)",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test --test-concurrency=1 test/",
+    "seed": "node server/seed-cli.js",
+    "e2e": "node e2e/run.mjs"
+  }
+}

@@ -1,0 +1,52 @@
+// Board-level actions used from several places (dashboard menu, share panel, settings panel).
+import { h } from '../lib/h.js';
+import { api } from '../lib/api.js';
+import { router } from '../lib/router.js';
+import { modal, toast, confirmDialog, copyText } from '../lib/ui.js';
+import { requireLogin } from './auth.js';
+import { boardPath, boardUrl } from './common.js';
+
+export async function copyBoardLink(slug) {
+  const ok = await copyText(boardUrl(slug));
+  if (ok) toast('링크를 복사했어요.', 'success');
+  else toast('복사하지 못했어요. 주소를 직접 선택해 복사해 주세요.', 'error');
+  return ok;
+}
+
+/** POST /boards/:slug/duplicate, then open the copy. Throws ApiError on failure. */
+export async function duplicateBoard(slug, withPosts) {
+  const r = await api.post(`/boards/${encodeURIComponent(slug)}/duplicate`, { withPosts: !!withPosts });
+  toast('내 보드로 복제했어요.', 'success');
+  router.go(boardPath(r.board.slug));
+  return r.board;
+}
+
+/** Ask whether to copy posts too, then duplicate (login required). */
+export async function duplicateBoardFlow(board) {
+  const user = await requireLogin({ message: '보드를 복제하려면 로그인이 필요해요.' });
+  if (!user) return;
+  const withPosts = h('input', { type: 'checkbox', name: 'withPosts', checked: true });
+  modal({
+    title: '내 보드로 복제', size: 'sm',
+    body: h('div', null,
+      h('p', { class: 'modal-text' }, `“${board.title}” 보드를 내 보드로 복사해요.`),
+      h('label', { class: 'checkbox' }, withPosts, h('span', null, '글도 함께 복사'))),
+    actions: [
+      { label: '취소', kind: 'secondary' },
+      { label: '복제하기', kind: 'primary', onClick: () => duplicateBoard(board.slug, withPosts.checked) },
+    ],
+  });
+}
+
+/** Confirm + DELETE. Resolves true when the board is gone. */
+export async function deleteBoardFlow(board) {
+  const ok = await confirmDialog({
+    title: '보드를 삭제할까요?',
+    message: `“${board.title}” 보드와 안에 있는 글·댓글·파일이 모두 사라지고, 되돌릴 수 없어요.`,
+    confirmLabel: '삭제', danger: true,
+  });
+  if (!ok) return false;
+  await api.del(`/boards/${encodeURIComponent(board.slug)}`);
+  toast('보드를 삭제했어요.', 'success');
+  return true;
+}
