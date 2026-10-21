@@ -286,6 +286,31 @@ describe('link preview: switches, videos, attachments', () => {
     } finally { await app.close(); await closeServer(site); }
   });
 
+  it('video titles come from the public oEmbed endpoints (fixed hosts); junk or http thumbnails are ignored', async () => {
+    const seen = [];
+    const json = (o) => ({ status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(o)) });
+    const app = await startApp({
+      previewFetcher: async (u) => {
+        seen.push(u);
+        if (u.startsWith('https://www.youtube.com/oembed?')) return json({ title: '  진짜   영상 제목 ', author_name: '채널 이름', thumbnail_url: 'https://i.ytimg.com/other.jpg' });
+        if (u.startsWith('https://vimeo.com/api/oembed.json?')) return json({ title: 'Vimeo 제목', author_name: '작가', thumbnail_url: 'http://insecure.example/t.jpg' });
+        return { status: 200, headers: { 'content-type': 'text/html' }, body: Buffer.from('<title>page</title>') };
+      },
+    });
+    try {
+      const u = makeUser(app, 'oe');
+      let r = await u.post('/api/link-preview', { url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=x' });
+      assert.equal(r.json.title, '진짜 영상 제목');
+      assert.equal(r.json.description, '채널 이름');
+      assert.equal(r.json.image, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg', 'ytimg thumbnail wins over the oEmbed one');
+      assert.ok(seen[0].includes(encodeURIComponent('https://www.youtube.com/watch?v=dQw4w9WgXcQ')), 'only the validated id is sent, not the user URL');
+      r = await u.post('/api/link-preview', { url: 'https://vimeo.com/76979871' });
+      assert.equal(r.json.title, 'Vimeo 제목');
+      assert.equal(r.json.image, null, 'a non-https oEmbed thumbnail is dropped');
+      assert.ok(seen.every((x) => /^https:\/\/(www\.youtube\.com\/oembed\?|vimeo\.com\/api\/oembed\.json\?)/.test(x)), 'no page fetch was needed: ' + seen.join(' '));
+    } finally { await app.close(); }
+  });
+
   it('YouTube / Vimeo -> kind=video with nocookie embed URL and thumbnail (page title via the fetcher)', async () => {
     const seen = [];
     const app = await startApp({

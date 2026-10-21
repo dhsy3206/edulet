@@ -130,6 +130,12 @@ export function classifyVideo(urlStr) {
   return null;
 }
 
+/** Public oEmbed endpoints (fixed hosts) used to learn a video's real title; the video id is validated by classifyVideo. */
+const OEMBED = {
+  youtube: (v) => `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent('https://www.youtube.com/watch?v=' + v.id)}`,
+  vimeo: (v) => `https://vimeo.com/api/oembed.json?url=${encodeURIComponent('https://vimeo.com/' + v.id)}`,
+};
+
 // ---- HTML parsing ---------------------------------------------------------------
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
@@ -409,7 +415,33 @@ export class PreviewService {
     return job;
   }
 
+  /** Title / channel / thumbnail of a YouTube or Vimeo video via its public oEmbed endpoint (fixed host, same SSRF-checked fetch). */
+  async #oembed(video, base) {
+    const endpoint = OEMBED[video.provider];
+    if (!endpoint) return null;
+    try {
+      const r = await this.fetchPage(endpoint(video));
+      if (r.status < 200 || r.status >= 300) return null;
+      const j = JSON.parse(new TextDecoder('utf-8').decode(r.body.subarray(0, 65536)));
+      const clip = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
+      const title = clip(j.title, 200);
+      if (!title) return null;
+      const thumb = typeof j.thumbnail_url === 'string' && /^https:\/\//i.test(j.thumbnail_url) ? j.thumbnail_url.slice(0, 500) : null;
+      return { ...base, title, description: clip(j.author_name, 300), image: video.image ?? thumb };
+    } catch {
+      return null; // fall back to the page itself
+    }
+  }
+
   async #fetchPreview(urlStr, host, video, base) {
+    if (video) {
+      const o = await this.#oembed(video, base);
+      if (o) {
+        if (this.cache.size >= CACHE_MAX) this.cache.delete(this.cache.keys().next().value);
+        this.cache.set(urlStr, { at: Date.now(), value: o });
+        return o;
+      }
+    }
     let page;
     try {
       page = await this.fetchPage(urlStr);
