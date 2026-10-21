@@ -211,7 +211,9 @@ export class BoardController {
         s.board = d.board;
         this._emit('board');
         // visibility / access changes may change our role or the section structure
-        if (prev && (prev.visibility !== d.board.visibility || prev.linkAccess !== d.board.linkAccess || prev.format !== d.board.format)) this._reload();
+        // …or what the server sends us (hidden authors under showAuthor=false, pending edits under approval)
+        const ps = (prev && prev.settings) || {}, ns = d.board.settings || {};
+        if (prev && (prev.visibility !== d.board.visibility || prev.linkAccess !== d.board.linkAccess || prev.format !== d.board.format || ps.showAuthor !== ns.showAuthor || ps.approval !== ns.approval)) this._reload();
         return;
       }
       case 'board.deleted':
