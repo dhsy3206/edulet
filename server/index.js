@@ -108,8 +108,8 @@ async function dispatch(app, req, res) {
  * @param {object} [opts]
  * @param {string} [opts.dataDir] @param {number} [opts.port] @param {string} [opts.host]
  * @param {boolean|string|number} [opts.seed] auto | on | off
- * Internal / test-only (never read from env or HTTP): config, quiet, publicDir, seedDir, authRateLimit, pingMs,
- * allowPrivatePreviewHosts (true | ['host:port']), previewFetcher.
+ * Internal / test-only (never read from env or HTTP): config, quiet, publicDir, seedDir, authRateLimit, pingMs, presenceMinMs,
+ * allowPrivatePreviewHosts (true | ['host:port']), previewFetcher, previewDnsLookup, previewLimits, uploadIdleMs, uploadGcMaxAgeMs.
  */
 export async function createApp(opts = {}) {
   const config = loadConfig(opts);
@@ -129,13 +129,16 @@ export async function createApp(opts = {}) {
     hub: null,
     preview: null,
     serveUpload: null,
+    uploadIdleMs: opts.uploadIdleMs, // test-only: how long an upload body may stall (default 30 s)
   };
-  app.hub = new Hub(app, { pingMs: opts.pingMs ?? 25000 });
+  app.hub = new Hub(app, { pingMs: opts.pingMs ?? 25000, presenceMinMs: opts.presenceMinMs ?? 1000 });
   app.preview = new PreviewService({
     enabled: config.linkPreview,
     allowPrivate: opts.allowPrivatePreviewHosts ?? false,
     fetcher: opts.previewFetcher ?? null,
     timeoutMs: opts.previewTimeoutMs ?? 5000,
+    dnsLookup: opts.previewDnsLookup ?? undefined,
+    ...(opts.previewLimits ?? {}),
   });
 
   app.router.add('GET', '/health', async () => ({ ok: true }));
@@ -161,7 +164,18 @@ export async function createApp(opts = {}) {
 
   const seeded = runSeed(app, { mode: config.seed, dir: app.seedDir });
 
+  // Orphaned uploads (never attached, or whose post is gone) are removed after 24 h — on start and every 6 h.
+  const gcOpts = opts.uploadGcMaxAgeMs != null ? { maxAgeMs: opts.uploadGcMaxAgeMs } : {};
+  const runGc = () => { try { app.gcUploads(gcOpts); } catch (e) { if (!app.quiet) console.error('[edulet] upload gc failed', e); } };
+  runGc();
+  const gcTimer = setInterval(runGc, 6 * 3600000);
+  gcTimer.unref();
+
   const server = http.createServer((req, res) => { dispatch(app, req, res); });
+  server.maxConnections = config.maxConnections;
+  // explicit instead of node's defaults: slow-header clients are dropped early, a request (an upload at most) gets 10 minutes
+  server.headersTimeout = 20000;
+  server.requestTimeout = 600000;
   await new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(config.port, config.host, resolve);
@@ -176,11 +190,13 @@ export async function createApp(opts = {}) {
     port,
     db,
     app,
+    server,
     seeded,
     async close() {
       if (closed) return;
       closed = true;
       clearInterval(sweeper);
+      clearInterval(gcTimer);
       app.hub.closeAll();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

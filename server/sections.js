@@ -1,10 +1,11 @@
 // Sections (shelf columns / rows lines). CONTRACT §5 "섹션".
 import { LIMITS, atLeast } from './constants.js';
 import { bad, notFound, unauthorized } from './http.js';
-import { effectiveRole, denied, needBoard, postAudience } from './access.js';
+import { effectiveRole, denied, limitWrites, needBoard, postAudience } from './access.js';
 import { bodyId, needLine, now, toId } from './util.js';
 import { getPostJson, sectionJson, touchBoard } from './views.js';
 import { planPlacement } from './rank.js';
+import { releaseUploads, uploadIdsOfPosts } from './uploads.js';
 
 export function registerSections(app) {
   const { db, router } = app;
@@ -37,6 +38,7 @@ export function registerSections(app) {
 
   router.add('POST', '/boards/:slug/sections', async (c) => {
     const { board } = needBoard(c, c.params.slug, 'moderate');
+    limitWrites(c);
     const b = await c.body();
     const title = needLine(b.title, '섹션 이름', 1, LIMITS.sectionTitle);
     const beforeId = b.beforeId == null ? null : bodyId(b.beforeId, 'beforeId');
@@ -54,6 +56,7 @@ export function registerSections(app) {
 
   router.add('PATCH', '/sections/:id', async (c) => {
     const { section, board } = needSection(c, c.params.id);
+    limitWrites(c);
     const b = await c.body();
     const title = needLine(b.title, '섹션 이름', 1, LIMITS.sectionTitle);
     db.run('UPDATE sections SET title = ? WHERE id = ?', title, section.id);
@@ -64,6 +67,7 @@ export function registerSections(app) {
 
   router.add('POST', '/sections/:id/move', async (c) => {
     const { section, board } = needSection(c, c.params.id);
+    limitWrites(c);
     const b = await c.body();
     if (!('beforeId' in b)) throw bad('bad_request', 'beforeId 가 필요해요.');
     const beforeId = b.beforeId == null ? null : bodyId(b.beforeId, 'beforeId');
@@ -80,10 +84,11 @@ export function registerSections(app) {
 
   router.add('DELETE', '/sections/:id', async (c) => {
     const { section, board } = needSection(c, c.params.id);
+    limitWrites(c);
     const mode = c.query.posts === 'delete' ? 'delete' : c.query.posts === undefined || c.query.posts === 'move' ? 'move' : null;
     if (!mode) throw bad('bad_request', 'posts 는 delete 또는 move 여야 해요.');
     const affected = db.tx(() => {
-      const posts = db.all('SELECT id, status, author_id FROM posts WHERE section_id = ? ORDER BY rank, id', section.id);
+      const posts = db.all('SELECT id, status, author_id, att_url, att_preview FROM posts WHERE section_id = ? ORDER BY rank, id', section.id);
       if (mode === 'move') {
         const target = db.get('SELECT id FROM sections WHERE board_id = ? AND id != ? ORDER BY rank, id LIMIT 1', board.id, section.id);
         const targetId = target?.id ?? null;
@@ -104,6 +109,7 @@ export function registerSections(app) {
         c.emit(board.id, 'post.updated', { post }, postAudience(post));
       }
     }
+    if (mode === 'delete') releaseUploads(app, uploadIdsOfPosts(affected));
     return { ok: true };
   });
 }

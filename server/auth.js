@@ -83,6 +83,22 @@ function limitAuth(app, c) {
   }
 }
 
+const FAIL_WINDOW_MS = 15 * 60 * 1000;
+
+/**
+ * Per-account failure throttle for password checks. The key is the SUBMITTED user name (existing or not), so a lock looks
+ * the same for every name and says nothing about which accounts exist. While locked, attempts are refused with 429
+ * before any password is hashed — even a correct one.
+ */
+function failKey(kind, id) { return `${kind}:${String(id).slice(0, 64)}`; }
+function checkFailures(app, key) {
+  if (app.rate.count(key) >= app.config.loginFailMax) {
+    const wait = Math.max(1, Math.ceil(app.rate.retryAfterMs(key) / 1000));
+    throw new HttpError(429, 'rate_limited', '시도가 너무 많아요. 잠시 뒤에 다시 해 주세요.', { 'Retry-After': String(wait) });
+  }
+}
+const recordFailure = (app, key) => { app.rate.hit(key, app.config.loginFailMax, FAIL_WINDOW_MS); };
+
 function normUsername(v) {
   const u = typeof v === 'string' ? v.trim().toLowerCase() : '';
   if (!new RegExp(`^[a-z0-9_.-]{${LIMITS.usernameMin},${LIMITS.usernameMax}}$`).test(u)) {
@@ -131,10 +147,16 @@ export function registerAuth(app) {
     const b = await c.body();
     const username = typeof b.username === 'string' ? b.username.trim().toLowerCase() : '';
     const password = typeof b.password === 'string' ? b.password.slice(0, LIMITS.passwordMax) : '';
+    const fk = failKey('loginfail', username);
+    checkFailures(app, fk);
     const row = username ? db.get('SELECT * FROM users WHERE username = ?', username) : null;
     // Always run one scrypt so timing does not reveal whether the user exists.
     const ok = await verifyPassword(password, row?.password_hash || (await dummy()));
-    if (!row || !row.password_hash || !ok) throw new HttpError(401, 'bad_credentials', '사용자명 또는 비밀번호가 맞지 않아요.');
+    if (!row || !row.password_hash || !ok) {
+      recordFailure(app, fk);
+      throw new HttpError(401, 'bad_credentials', '사용자명 또는 비밀번호가 맞지 않아요.');
+    }
+    app.rate.clear(fk);
     if (c.tokenHash) db.run('DELETE FROM sessions WHERE token_hash = ?', c.tokenHash);
     const { token } = createSession(app, row.id);
     setSessionCookie(app, c, token);
@@ -173,6 +195,11 @@ export function registerAuth(app) {
   router.add('PATCH', '/auth/me', async (c) => {
     if (!c.user) throw unauthorized();
     const b = await c.body();
+    // Profile edits are cheap but not free; a password change runs scrypt (twice), so it also shares the per-IP budget of
+    // the other password endpoints and has its own per-account failure counter.
+    if (!app.rate.hit('profile:' + c.user.id, 30)) {
+      throw new HttpError(429, 'rate_limited', '잠시 뒤에 다시 해 주세요.', { 'Retry-After': '60' });
+    }
     const sets = [];
     const vals = [];
     if (b.displayName !== undefined) { sets.push('display_name = ?'); vals.push(needLine(b.displayName, '표시 이름', 1, LIMITS.displayName)); }
@@ -184,14 +211,24 @@ export function registerAuth(app) {
     if (b.newPassword !== undefined) {
       if (c.user.is_guest || !c.user.password_hash) throw forbidden('이 계정은 비밀번호를 바꿀 수 없어요.');
       needPassword(b.newPassword);
+      limitAuth(app, c);
+      const fk = failKey('pwfail', c.user.id);
+      checkFailures(app, fk);
       if (typeof b.currentPassword !== 'string' || !(await verifyPassword(b.currentPassword.slice(0, LIMITS.passwordMax), c.user.password_hash))) {
+        recordFailure(app, fk);
         throw new HttpError(401, 'bad_credentials', '현재 비밀번호가 맞지 않아요.');
       }
+      app.rate.clear(fk);
       newHash = await hashPassword(b.newPassword);
       sets.push('password_hash = ?'); vals.push(newHash);
     }
     if (sets.length) db.run(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, ...vals, c.user.id);
-    if (newHash) db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', c.user.id, c.tokenHash);
+    if (newHash) {
+      // every other session is revoked — and so are its open event streams (they would otherwise keep receiving events)
+      const revoked = db.all('SELECT token_hash FROM sessions WHERE user_id = ? AND token_hash != ?', c.user.id, c.tokenHash);
+      db.run('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?', c.user.id, c.tokenHash);
+      for (const r of revoked) app.hub.closeSession(r.token_hash);
+    }
     app.hub.userChanged(c.user.id);
     return { user: publicUser(db.get('SELECT * FROM users WHERE id = ?', c.user.id)) };
   });

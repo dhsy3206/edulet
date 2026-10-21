@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { AVATAR_COLORS, FONTS, FORMATS, LINK_ACCESS, POST_COLORS, SCHEMES, VISIBILITY, WALLPAPERS, isSectioned } from './constants.js';
-import { deleteBoardFiles } from './boards.js';
+import { deleteBoard } from './boards.js';
 import { randomHex, sniffImage, uploadUrl } from './util.js';
 import { parseSettings } from './views.js';
 
@@ -184,12 +184,7 @@ export function resetDemo(app, dir) {
   for (const { spec } of loadSeedSpecs(dir)) {
     const board = db.get('SELECT * FROM boards WHERE slug = ?', spec.board.slug);
     if (!board) continue;
-    const cleanup = deleteBoardFiles(app, board.id);
-    db.tx(() => {
-      db.run('DELETE FROM uploads WHERE board_id = ?', board.id);
-      db.run('DELETE FROM boards WHERE id = ?', board.id);
-    });
-    cleanup();
+    deleteBoard(app, board.id);
   }
   db.run(`DELETE FROM users WHERE password_hash IS NULL AND username IS NULL
             AND NOT EXISTS (SELECT 1 FROM boards WHERE owner_id = users.id)

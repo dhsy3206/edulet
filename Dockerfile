@@ -8,7 +8,8 @@ COPY package.json ./
 COPY server ./server
 COPY public ./public
 COPY seed ./seed
-RUN mkdir -p /data && chown -R node:node /data /app
+# developer-only pages (public/_dev) must not ship in the image
+RUN rm -rf /app/public/_dev && mkdir -p /data && chown -R node:node /data /app
 USER node
 VOLUME /data
 EXPOSE 3000

@@ -1,18 +1,17 @@
 // Boards: CRUD, snapshot, duplicate, members, export, SSE entry point. CONTRACT §5 "보드".
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import {
   FONTS, FORMATS, LIMITS, LINK_ACCESS, REACTIONS, ROLES, SCHEMES, TEMPLATES, TEMPLATE_DEFS, VISIBILITY, WALLPAPERS,
   atLeast, isSectioned,
 } from './constants.js';
 import { HttpError, bad, forbidden, notFound } from './http.js';
-import { boardBySlug, needBoard, needUser, canSeePost, postAudience } from './access.js';
+import { boardBySlug, denied, needBoard, needUser, canSeePost, postAudience } from './access.js';
 import { cpLen, needLine, now, oneOf, optBlock, toId } from './util.js';
 import {
-  COMMENT_SELECT, POST_SELECT, boardJson, buildPosts, commentJson, getPostJson, getUserRow, parseSettings,
-  sectionJson, userJson,
+  COMMENT_SELECT, FULL_VIEW, POST_SELECT, boardJson, buildPosts, commentJson, getPostJson, getUserRow, parseSettings,
+  sectionJson, shapeComment, shapePost, userJson, viewerFor,
 } from './views.js';
+import { releaseUploads, uploadIdsIn, uploadIdsOfPosts } from './uploads.js';
 
 const SLUG_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 
@@ -29,13 +28,20 @@ export function insertSections(db, boardId, titles) {
   return titles.map((title, i) => db.run('INSERT INTO sections (board_id, title, rank) VALUES (?,?,?)', boardId, title, i + 1).id);
 }
 
-/** Posts of a board that this viewer may see (pending: moderators + author only), with `mine` for the viewer. */
+/**
+ * Posts of a board that this viewer may see (pending: moderators + author only), with `mine` for the viewer. Authors are
+ * shaped for the viewer (settings.showAuthor / login names) — see views.js.
+ */
 export function snapshotPosts(db, board, role, userId) {
+  const view = viewerFor(board, role, userId);
   const rows = db
     .all(POST_SELECT + ' WHERE p.board_id = ? ORDER BY p.pinned DESC, p.rank ASC, p.id ASC', board.id)
     .filter((r) => canSeePost(r, role, userId));
-  return buildPosts(db, rows, { boardId: board.id }, userId, true);
+  return buildPosts(db, rows, { boardId: board.id }, userId, true).map((p) => shapePost(p, view));
 }
+
+/** The viewer of a board's creator/admin: sees login names, nothing is anonymised. */
+const adminView = (userId) => ({ userId, admin: true, anonymize: false });
 
 function memberRows(db, board) {
   const owner = getUserRow(db, board.owner_id);
@@ -86,23 +92,19 @@ function ensureSectionLayout(c, board) {
   return { created, moved: orphans.map((o) => o.id) };
 }
 
-export function deleteBoardFiles(app, boardId) {
+/**
+ * Delete a board (its posts, sections, comments, ... cascade) and every uploaded file nothing else references: the files
+ * of its posts, its wallpaper and the files uploaded for it. A duplicated board shares files with its original, so a file
+ * is only removed when the LAST board/post using it goes (L1).
+ */
+export function deleteBoard(app, boardId) {
   const { db } = app;
-  const dir = path.join(app.config.dataDir, 'uploads');
-  const toRemove = [];
-  for (const u of db.all('SELECT id FROM uploads WHERE board_id = ?', boardId)) {
-    const needle = `/uploads/${u.id}/`;
-    const shared =
-      db.get('SELECT 1 AS x FROM posts WHERE board_id != ? AND (instr(att_url, ?) > 0 OR instr(att_preview, ?) > 0) LIMIT 1', boardId, needle, needle) ||
-      db.get('SELECT 1 AS x FROM boards WHERE id != ? AND instr(wallpaper, ?) > 0 LIMIT 1', boardId, needle);
-    if (shared) db.run('UPDATE uploads SET board_id = NULL WHERE id = ?', u.id);
-    else toRemove.push(u.id);
-  }
-  return () => {
-    for (const id of toRemove) {
-      try { fs.rmSync(path.join(dir, id), { force: true }); } catch { /* best effort */ }
-    }
-  };
+  const board = db.get('SELECT wallpaper FROM boards WHERE id = ?', boardId);
+  const ids = uploadIdsOfPosts(db.all('SELECT att_url, att_preview FROM posts WHERE board_id = ?', boardId));
+  for (const id of uploadIdsIn(board?.wallpaper)) ids.add(id);
+  for (const u of db.all('SELECT id FROM uploads WHERE board_id = ?', boardId)) ids.add(u.id);
+  db.tx(() => { db.run('DELETE FROM boards WHERE id = ?', boardId); });
+  releaseUploads(app, ids, { detachFromBoard: boardId });
 }
 
 // ---- export helpers -------------------------------------------------------
@@ -134,7 +136,7 @@ export function registerBoards(app) {
     );
     return {
       boards: rows.map((r) => ({
-        ...boardJson(db, r), role: r.my_role, isOwner: r.owner_id === me.id, postCount: r.post_count, memberCount: r.member_count,
+        ...boardJson(db, r, { userId: me.id, admin: r.my_role === 'admin', anonymize: false }), role: r.my_role, isOwner: r.owner_id === me.id, postCount: r.post_count, memberCount: r.member_count,
       })),
     };
   });
@@ -159,21 +161,21 @@ export function registerBoards(app) {
       insertSections(db, id, titles);
       return db.get('SELECT * FROM boards WHERE id = ?', id);
     });
-    return c.json({ board: boardJson(db, board) }, 201);
+    return c.json({ board: boardJson(db, board, adminView(me.id)) }, 201);
   });
 
   router.add('GET', '/boards/:slug', async (c) => {
     const { board, role, isOwner } = needBoard(c, c.params.slug, 'read');
     const uid = c.user?.id ?? null;
     const out = {
-      board: boardJson(db, board),
+      board: boardJson(db, board, viewerFor(board, role, uid)),
       role,
       isOwner,
       sections: db.all('SELECT * FROM sections WHERE board_id = ? ORDER BY rank, id', board.id).map(sectionJson),
       posts: snapshotPosts(db, board, role, uid),
     };
     if (atLeast(role, 'admin')) out.members = memberRows(db, board);
-    out.presence = app.hub.presence(board.id);
+    out.presence = app.hub.presence(board.id); // capped at 50; the `more` count arrives with the hello/presence events
     return out;
   });
 
@@ -200,7 +202,7 @@ export function registerBoards(app) {
       const layout = isSectioned(fresh.format) && b.format !== undefined ? ensureSectionLayout(c, fresh) : null;
       return { fresh, layout };
     });
-    const json = boardJson(db, result.fresh);
+    const json = boardJson(db, result.fresh, FULL_VIEW); // the hub shapes the owner per connection
     c.emit(board.id, 'board.updated', { board: json });
     if (result.layout?.created) c.emit(board.id, 'section.created', { section: result.layout.created });
     for (const id of result.layout?.moved ?? []) {
@@ -208,29 +210,27 @@ export function registerBoards(app) {
       c.emit(board.id, 'post.moved', { post }, postAudience(post));
     }
     if (b.visibility !== undefined || b.linkAccess !== undefined) app.hub.refresh(board.id);
-    return { board: json };
+    if (b.wallpaper !== undefined) releaseUploads(app, uploadIdsIn(board.wallpaper)); // a replaced uploaded wallpaper may be unused now
+    return { board: boardJson(db, result.fresh, adminView(c.user.id)) };
   });
 
   router.add('DELETE', '/boards/:slug', async (c) => {
     const { board, isOwner } = needBoard(c, c.params.slug, 'admin');
     if (!isOwner) throw forbidden('보드는 만든 사람만 지울 수 있어요.');
-    const cleanup = deleteBoardFiles(app, board.id);
-    db.tx(() => {
-      db.run('DELETE FROM uploads WHERE board_id = ?', board.id);
-      db.run('DELETE FROM boards WHERE id = ?', board.id);
-    });
+    deleteBoard(app, board.id);
     c.emit(board.id, 'board.deleted', {});
     app.hub.closeBoard(board.id);
-    cleanup();
     return { ok: true };
   });
 
   router.add('POST', '/boards/:slug/duplicate', async (c) => {
-    const { board } = needBoard(c, c.params.slug, 'read');
+    const { board, role } = needBoard(c, c.params.slug, 'read');
     const me = needUser(c);
     if (me.is_guest) throw forbidden('게스트는 보드를 만들 수 없어요. 가입하면 만들 수 있어요.', 'guest_cannot_create');
     const b = await c.body();
     const withPosts = b.withPosts === true;
+    // A board that hides authors must not give them away through a copy: below `moderate` the copier owns every copied post.
+    const hideAuthors = viewerFor(board, role, me.id).anonymize;
     const suffix = ' 사본';
     const title = cpLen(board.title + suffix) <= LIMITS.boardTitle
       ? board.title + suffix
@@ -254,14 +254,14 @@ export function registerBoards(app) {
             `INSERT INTO posts (board_id, section_id, author_id, title, body, color, pinned, status, rank, x, y, w,
                                 att_kind, att_url, att_name, att_mime, att_size, att_preview, created_at, updated_at)
              VALUES (?,?,?,?,?,?,?,'published',?,?,?,?,?,?,?,?,?,?,?,?)`,
-            id, p.section_id == null ? null : (secMap.get(p.section_id) ?? null), p.author_id, p.title, p.body, p.color, p.pinned,
+            id, p.section_id == null ? null : (secMap.get(p.section_id) ?? null), hideAuthors ? me.id : p.author_id, p.title, p.body, p.color, p.pinned,
             p.rank, p.x, p.y, p.w, p.att_kind, p.att_url, p.att_name, p.att_mime, p.att_size, p.att_preview, p.created_at, p.updated_at,
           );
         }
       }
       return db.get('SELECT * FROM boards WHERE id = ?', id);
     });
-    return c.json({ board: boardJson(db, copy) }, 201);
+    return c.json({ board: boardJson(db, copy, adminView(me.id)) }, 201);
   });
 
   // ---- members ------------------------------------------------------------
@@ -281,6 +281,10 @@ export function registerBoards(app) {
 
   router.add('POST', '/boards/:slug/members', async (c) => {
     const { board } = needBoard(c, c.params.slug, 'admin');
+    // every call is a username lookup (404 user_not_found vs 201/409): keep it from being used to enumerate accounts
+    if (!app.rate.hit('member:' + c.user.id, app.config.memberRateMax)) {
+      throw new HttpError(429, 'rate_limited', '너무 자주 시도하고 있어요. 잠시 뒤에 다시 해 주세요.', { 'Retry-After': '60' });
+    }
     const b = await c.body();
     const username = typeof b.username === 'string' ? b.username.trim().toLowerCase() : '';
     const role = oneOf(b.role, ROLES, '역할');
@@ -305,9 +309,16 @@ export function registerBoards(app) {
     return { member: memberJson(board, uid) };
   });
 
+  // Admins remove anyone; every member may remove THEMSELVES (leave the board). The owner can never leave.
   router.add('DELETE', '/boards/:slug/members/:userId', async (c) => {
-    const { board } = needBoard(c, c.params.slug, 'admin');
+    const { board, role, isOwner } = needBoard(c, c.params.slug, 'read');
+    const me = needUser(c);
     const uid = toId(c.params.userId);
+    if (uid !== me.id) {
+      if (!atLeast(role, 'admin')) throw denied(c);
+    } else if (isOwner) {
+      throw new HttpError(409, 'owner_cannot_leave', '보드를 만든 사람은 나갈 수 없어요. 보드를 지우거나 다른 사람에게 맡길 수 없어요.');
+    }
     if (!db.run('DELETE FROM board_members WHERE board_id = ? AND user_id = ?', board.id, uid).changes) throw notFound('구성원을 찾을 수 없어요.');
     changed(c, board);
     return { ok: true };
@@ -321,6 +332,7 @@ export function registerBoards(app) {
     const sections = db.all('SELECT * FROM sections WHERE board_id = ? ORDER BY rank, id', board.id);
     const secRank = new Map(sections.map((s, i) => [s.id, i]));
     const secTitle = new Map(sections.map((s) => [s.id, s.title]));
+    const view = viewerFor(board, role, c.user?.id ?? null);
     let posts = snapshotPosts(db, board, role, c.user?.id ?? null);
     if (board.format === 'backchannel') posts.sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
     else {
@@ -335,11 +347,11 @@ export function registerBoards(app) {
         const cmts = new Map();
         for (const r of db.all(`${COMMENT_SELECT} WHERE c.post_id IN (SELECT id FROM posts WHERE board_id = ?) ORDER BY c.created_at, c.id`, board.id)) {
           if (!cmts.has(r.post_id)) cmts.set(r.post_id, []);
-          cmts.get(r.post_id).push(commentJson(r));
+          cmts.get(r.post_id).push(shapeComment(commentJson(r), view));
         }
         return JSON.stringify({
           exportedAt: new Date().toISOString(),
-          board: boardJson(db, board),
+          board: boardJson(db, board, view),
           sections: sections.map(sectionJson),
           posts: posts.map((p) => ({ ...p, comments: cmts.get(p.id) ?? [] })),
         }, null, 2);

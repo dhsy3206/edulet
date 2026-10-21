@@ -1,7 +1,7 @@
 // Reactions (like / vote / star / grade / emoji). CONTRACT §5.
 import { EMOJIS } from './constants.js';
 import { HttpError, bad } from './http.js';
-import { needPost, postAudience } from './access.js';
+import { limitWrites, needPost, postAudience } from './access.js';
 import { parseSettings, reactionsOf } from './views.js';
 
 const strip = (s) => String(s).replace(/️/g, '');
@@ -11,6 +11,7 @@ export function registerReactions(app) {
 
   router.add('PUT', '/posts/:id/reactions', async (c) => {
     const { post, board } = needPost(c, c.params.id, 'comment');
+    limitWrites(c);
     const b = await c.body();
     const kind = b.kind;
     if (!['like', 'vote', 'star', 'grade', 'emoji'].includes(kind)) throw bad('bad_request', '반응 종류가 올바르지 않아요.');

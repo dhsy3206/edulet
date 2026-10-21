@@ -59,6 +59,18 @@ export function needPostEdit(c, acc) {
   return own;
 }
 
+/** Per-user write budget across posts / comments / reactions / sections (CONTRACT §1 EDULET_WRITE_RATE). */
+export function limitWrites(c) {
+  if (!c.app.rate.hit('write:' + c.user.id, c.app.config.writeRateMax)) {
+    throw new HttpError(429, 'rate_limited', '너무 빠르게 쓰고 있어요. 잠시 뒤에 다시 해 주세요.', { 'Retry-After': '30' });
+  }
+}
+
+/** After an await (request body, link preview, upload): the session may have been revoked or expired meanwhile. */
+export function recheckSession(c) {
+  if (c.tokenHash && !c.db.get('SELECT 1 AS x FROM sessions WHERE token_hash = ? AND expires_at > ?', c.tokenHash, Date.now())) throw unauthorized();
+}
+
 /** Event audience for a post: everyone, or (pending) moderators + author only. */
 export function postAudience(post) {
   if (post.status !== 'pending') return undefined;
