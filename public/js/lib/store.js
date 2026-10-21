@@ -4,6 +4,21 @@ import { api, setUnauthorizedHandler } from './api.js';
 const data = { me: null, config: null, authReady: false };
 const subs = new Map();
 
+// Other tabs of the same browser share the session cookie: tell them when we sign in/out so they never show a stale identity.
+let channel = null;
+try {
+  channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('edulet-auth') : null;
+} catch {
+  channel = null;
+}
+const announce = () => {
+  try {
+    channel && channel.postMessage({ type: 'me' });
+  } catch {
+    /* ignore */
+  }
+};
+
 function emit(key) {
   for (const fn of [...(subs.get(key) || [])]) {
     try {
@@ -61,16 +76,19 @@ export const store = {
   async login(username, password) {
     const r = await api.post('/auth/login', { username, password });
     this.set('me', r.user);
+    announce();
     return r.user;
   },
   async register(username, password, displayName) {
     const r = await api.post('/auth/register', { username, password, displayName });
     this.set('me', r.user);
+    announce();
     return r.user;
   },
   async guest(displayName) {
     const r = await api.post('/auth/guest', { displayName });
     this.set('me', r.user);
+    announce();
     return r.user;
   },
   async logout() {
@@ -78,6 +96,7 @@ export const store = {
       await api.post('/auth/logout');
     } finally {
       this.set('me', null);
+      announce();
     }
   },
   async updateProfile(patch) {
@@ -91,3 +110,5 @@ export const store = {
 setUnauthorizedHandler(() => {
   if (data.me) store.set('me', null);
 });
+
+if (channel) channel.onmessage = () => store.loadMe();

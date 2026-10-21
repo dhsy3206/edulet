@@ -191,6 +191,120 @@ try {
     await page.screenshot(join(OUT, 's5-mobile.png'));
     await ctx.close();
   });
+
+  /* ── S6 connection lifecycle & multi-tab behaviour (from the adversarial UX review) ── */
+  const streams = (a = app) => [...a.app.hub.boards.values()].reduce((n, r) => n + r.conns.size, 0);
+  const setHidden = (page, hidden) =>
+    page.eval(`Object.defineProperty(document, 'hidden', { value: ${hidden}, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); 1`);
+
+  await step('S6a', async () => {
+    const A = await newUser('숨김', { guest: true, path: '/b/practice' });
+    await A.page.goto(base + '/b/practice');
+    await A.page.waitFor('[data-post-id]', { timeout: 15000 });
+    await sleep(800);
+    const before = streams();
+    check('S6 열린 보드는 실시간 연결을 잡음', before >= 1, 'streams=' + before);
+    await A.page.eval('window.__EDULET_HIDE_MS = 500; 1');
+    await setHidden(A.page, true);
+    const t0 = Date.now();
+    while (streams() >= before && Date.now() - t0 < 5000) await sleep(100);
+    check('S6 숨은 탭은 연결을 반납(호스트당 6연결 제한 회피)', streams() < before, `before=${before} now=${streams()}`);
+    const B = await newUser('밥둘', { guest: true, path: '/b/practice' });
+    const made = await call(B.page, 'POST', '/boards/practice/posts', { title: '숨은 동안 올라온 글' });
+    check('S6 (준비) 다른 사용자의 글 생성', made.status === 201, 'status=' + made.status);
+    await setHidden(A.page, false);
+    await A.page.waitFor(`[...document.querySelectorAll('[data-post-id]')].some(e => e.innerText.includes('숨은 동안 올라온 글'))`, { timeout: 7000 });
+    check('S6 다시 보이면 연결을 되살리고 놓친 글을 따라잡음', true);
+    check('S6 연결이 다시 열림', streams() >= before, `streams=${streams()}`);
+    check('S6 콘솔 오류 없음', A.page.errors.length === 0, A.page.errors.join(' | ').slice(0, 300));
+    await A.ctx.close();
+    await B.ctx.close();
+  });
+
+  await step('S6b', async () => {
+    const dir2 = mkdtempSync(join(tmpdir(), 'edulet-e2e2-'));
+    const app2 = await createApp({ dataDir: dir2, port: 0, seed: true, pingMs: 3600000 }); // this server never pings
+    const base2 = app2.url.replace(/\/$/, '');
+    try {
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage(base2 + '/');
+      await call(page, 'POST', '/auth/guest', { displayName: '감시' });
+      await page.goto(base2 + '/b/practice');
+      await page.waitFor('[data-post-id]', { timeout: 15000 });
+      await sleep(600);
+      const first = [...[...app2.app.hub.boards.values()][0].conns][0];
+      await page.eval('window.__EDULET_SILENCE_MS = 1200; 1');
+      let replaced = false;
+      for (let i = 0; i < 60 && !replaced; i++) {
+        await sleep(100);
+        const room = [...app2.app.hub.boards.values()][0];
+        replaced = !!room && room.conns.size > 0 && ![...room.conns].includes(first);
+      }
+      check('S6 침묵한 연결은 감시자가 끊고 새로 연결(서버 ping 이 없어도)', replaced);
+      await ctx.close();
+    } finally {
+      await app2.close();
+      try { rmSync(dir2, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+
+  await step('S6c', async () => {
+    const O = await newUser('탭동기');
+    const A = O.page;
+    await A.goto(base + '/dashboard');
+    await A.waitFor('[data-role="new-board"]', { timeout: 10000 });
+    const B = await O.ctx.newPage(base + '/dashboard');
+    await B.waitFor('[data-role="new-board"]', { timeout: 10000 });
+    await A.click('[aria-label="사용자 메뉴"]');
+    await A.waitFor(`[...document.querySelectorAll('.popover .menu-item')].some(b => b.innerText.includes('로그아웃'))`);
+    await A.eval(`[...document.querySelectorAll('.popover .menu-item')].find(b => b.innerText.includes('로그아웃')).click(); 1`);
+    await B.waitFor(`!document.querySelector('[data-role="new-board"]') && document.body.innerText.includes('로그인')`, { timeout: 6000 });
+    check('S6 한 탭에서 로그아웃하면 다른 탭도 로그아웃 상태가 됨', true);
+    await O.ctx.close();
+  });
+
+  await step('S6d', async () => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage(base + '/');
+    await sleep(500);
+    await page.eval(`history.pushState(null, '', '/b/demo-board'); dispatchEvent(new PopStateEvent('popstate')); 1`);
+    await page.waitFor('[data-post-id]', { timeout: 15000 });
+    const id = await page.eval(`document.querySelector('[data-post-id]').dataset.postId`);
+    await page.click(`[data-post-id="${id}"]`);
+    await page.waitFor('[data-role="detail"]');
+    await page.key('Escape');
+    await page.waitFor(`!document.querySelector('[data-role="detail"]')`);
+    check('S6 상세를 닫으면 URL 이 보드로 돌아옴', (await page.eval('location.pathname')) === '/b/demo-board');
+    await page.eval('history.back(); 1');
+    await sleep(600);
+    check('S6 닫은 뒤 뒤로가기 한 번이면 보드를 떠남(죽은 기록 없음)', (await page.eval('location.pathname')) === '/', 'path=' + (await page.eval('location.pathname')));
+    await ctx.close();
+  });
+
+  await step('S6e', async () => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage(base + '/b/demo-board/p/99999999');
+    await page.waitFor('.toast', { timeout: 6000 });
+    check('S6 없는 글 딥링크: 안내 토스트', /찾을 수 없는/.test((await page.text('.toast')) || ''));
+    await page.waitFor('[data-post-id]', { timeout: 10000 });
+    check('S6 없는 글 딥링크: 보드로 복귀', (await page.eval('location.pathname')) === '/b/demo-board');
+    await ctx.close();
+  });
+
+  await step('S6f', async () => {
+    const O = await newUser('두탭');
+    const slug = (await call(O.page, 'POST', '/boards', { title: '두 탭 좋아요', format: 'wall' })).body.board.slug;
+    const post = (await call(O.page, 'POST', `/boards/${slug}/posts`, { title: '좋아요 확인' })).body.post;
+    await O.page.goto(base + '/b/' + slug);
+    const B = await O.ctx.newPage(base + '/b/' + slug);
+    await O.page.waitFor(`[data-post-id="${post.id}"] [data-reaction="like"]`, { timeout: 10000 });
+    await B.waitFor(`[data-post-id="${post.id}"] [data-reaction="like"]`, { timeout: 10000 });
+    await sleep(500);
+    await O.page.click(`[data-post-id="${post.id}"] [data-reaction="like"]`);
+    await B.waitFor(`document.querySelector('[data-post-id="${post.id}"] [data-reaction="like"]').getAttribute('aria-pressed') === 'true'`, { timeout: 6000 });
+    check('S6 같은 사용자의 다른 탭에도 내가 누른 좋아요가 표시됨', true);
+    await O.ctx.close();
+  });
 } finally {
   await browser.close();
   await app.close();

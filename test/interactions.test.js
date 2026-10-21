@@ -222,3 +222,45 @@ describe('XSS-ish payloads are stored and returned as inert text', () => {
     assert.ok(csv.includes('<img src=x onerror=alert(1)>'), 'kept as text');
   });
 });
+
+// ── GET /api/posts/:id/reactions (a second tab catching up) and zero-width-only posts ──────────────────────────────
+import { describe as describeExtra, it as itExtra, after as afterExtra } from 'node:test';
+import assertExtra from 'node:assert/strict';
+import { startApp as startAppExtra, Client as ClientExtra, makeUser as makeUserExtra } from './helpers.js';
+
+describeExtra('catch-up reactions endpoint and invisible-only posts', () => {
+  let app;
+  const ready = (async () => { app = await startAppExtra(); })();
+  afterExtra(async () => { await ready; await app.close(); });
+
+  itExtra('GET /posts/:id/reactions returns counts plus the caller\'s own state, for any viewer', async () => {
+    await ready;
+    const o = makeUserExtra(app, 'ownerx');
+    const oc = new ClientExtra(app, o.cookie);
+    const b = (await oc.post('/api/boards', { title: 'r', format: 'wall' })).json.board;
+    const p = (await oc.post(`/api/boards/${b.slug}/posts`, { title: 'hi' })).json.post;
+    await oc.put(`/api/posts/${p.id}/reactions`, { kind: 'like' });
+    const mine = await oc.get(`/api/posts/${p.id}/reactions`);
+    assertExtra.equal(mine.status, 200);
+    assertExtra.equal(mine.json.reactions.like.count, 1);
+    assertExtra.equal(mine.json.reactions.like.mine, true);
+    const anon = await new ClientExtra(app).get(`/api/posts/${p.id}/reactions`);
+    assertExtra.equal(anon.status, 200, 'link boards are readable by anyone');
+    assertExtra.equal(anon.json.reactions.like.count, 1);
+    assertExtra.equal(anon.json.reactions.like.mine, false);
+    await oc.patch(`/api/boards/${b.slug}`, { visibility: 'private' });
+    assertExtra.equal((await new ClientExtra(app).get(`/api/posts/${p.id}/reactions`)).status, 404, 'private boards do not leak');
+  });
+
+  itExtra('a title or body made only of zero-width characters is an empty post', async () => {
+    await ready;
+    const o = makeUserExtra(app, 'ownery');
+    const oc = new ClientExtra(app, o.cookie);
+    const b = (await oc.post('/api/boards', { title: 'z', format: 'wall' })).json.board;
+    const r = await oc.post(`/api/boards/${b.slug}/posts`, { title: '\u200b\u200d\ufeff', body: '\u2060 \u202e' });
+    assertExtra.equal(r.status, 400);
+    assertExtra.equal(r.json.error.code, 'empty_post');
+    const ok = await oc.post(`/api/boards/${b.slug}/posts`, { title: 'visible\u200b' });
+    assertExtra.equal(ok.status, 201);
+  });
+});

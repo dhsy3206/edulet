@@ -9,6 +9,12 @@ const strip = (s) => String(s).replace(/️/g, '');
 export function registerReactions(app) {
   const { db, router } = app;
 
+  // Current reactions incl. the caller's own state — lets a second tab of the same user catch up after another tab reacted.
+  router.add('GET', '/posts/:id/reactions', async (c) => {
+    const { post } = needPost(c, c.params.id, 'read');
+    return { reactions: reactionsOf(db, post.id, c.user ? c.user.id : 0) }; // 0 = nobody: `mine` present but false
+  });
+
   router.add('PUT', '/posts/:id/reactions', async (c) => {
     const { post, board } = needPost(c, c.params.id, 'comment');
     limitWrites(c);

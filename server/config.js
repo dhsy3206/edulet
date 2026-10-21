@@ -39,6 +39,7 @@ export function loadConfig(o = {}) {
     // abuse limits (CONTRACT §1) -------------------------------------------------
     uploadMaxConcurrent: num('UPLOAD_CONCURRENCY', 6), // uploads in flight, whole server
     uploadMaxPerUser: num('UPLOAD_PER_USER', 2), // uploads in flight, per user
+    guestRateMax: num('GUEST_RATE', 300), // guest sign-ins per client address per minute (a whole class may share one school IP)
     uploadRateMax: num('UPLOAD_RATE', 30), // upload requests per user per 10 minutes
     uploadQuotaMb: num('UPLOAD_QUOTA_MB', 300), // bytes a user may upload per 24 hours
     sseMaxPerUser: num('SSE_PER_USER', 10), // open event streams per signed-in user

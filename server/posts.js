@@ -5,6 +5,9 @@ import { needBoard, needPost, needPostEdit, postAudience, denied, canSeePost, li
 import { bodyId, finite, normalizeUrl, now, optBlock, optLine, oneOf, uploadUrl } from './util.js';
 import { getPostJson, parseSettings, touchBoard, viewerFor } from './views.js';
 import { edgeRank, planPlacement } from './rank.js';
+
+/** Text with zero-width / bidi-control characters removed: a title made only of those is still empty. */
+const visibleText = (s) => String(s ?? '').replace(/[​-‏⁠﻿‪-‮]/g, '').trim();
 import { releaseUploads, uploadIdsOfPosts } from './uploads.js';
 
 function pickPreview(pv) {
@@ -95,7 +98,7 @@ export function registerPosts(app) {
     geometry(b, geo);
     sectionOf(first.board, b.sectionId); // fail fast on a bad section before any slow work
     const att = await resolveAttachment(c, first.board, b.attachment);
-    if (!title && !body && !att.att_kind) throw bad('empty_post', '제목, 내용, 첨부 중 하나는 있어야 해요.');
+    if (!visibleText(title) && !visibleText(body) && !att.att_kind) throw bad('empty_post', '제목, 내용, 첨부 중 하나는 있어야 해요.');
     const t = now();
     const { id, board, role } = db.tx(() => {
       // The awaits above can take seconds (slow body, link preview): authorise again against the CURRENT state.
@@ -158,7 +161,7 @@ export function registerPosts(app) {
       const nextTitle = sets.title ?? post.title;
       const nextBody = sets.body ?? post.body;
       const nextAtt = 'att_kind' in sets ? sets.att_kind : post.att_kind;
-      if (!nextTitle && !nextBody && !nextAtt) throw bad('empty_post', '제목, 내용, 첨부 중 하나는 있어야 해요.');
+      if (!visibleText(nextTitle) && !visibleText(nextBody) && !nextAtt) throw bad('empty_post', '제목, 내용, 첨부 중 하나는 있어야 해요.');
       // Approval boards: a content edit by someone below `moderate` sends the post back to review. Position, colour,
       // pin, section and reactions do not.
       const contentChanged =

@@ -243,7 +243,8 @@ export class Hub {
           }
           if (!ok) { this.close(conn); continue; }
         }
-        this.write(conn, ': ping\n\n');
+        // a comment for proxies plus a named event so EventSource clients can notice a silently dead link
+        this.write(conn, ': ping\n\nevent: ping\ndata: {}\n\n');
       }
     }
   }

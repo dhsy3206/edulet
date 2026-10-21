@@ -1,15 +1,19 @@
 // BoardController — owns one board's client state, keeps it in sync via REST + SSE (docs/CONTRACT.md §6, §8).
 import { h } from './h.js';
-import { api, ApiError } from './api.js';
+import { api, ApiError, clientId } from './api.js';
 import { store } from './store.js';
 import { router } from './router.js';
 import { SECTIONED } from './constants.js';
-import { modal } from './ui.js';
+import { modal, toast } from './ui.js';
 import { plainText } from './markdown.js';
+
+// Thresholds can be overridden from the page (window.__EDULET_HIDE_MS / __EDULET_SILENCE_MS) so e2e tests need not wait.
+const hideMs = () => (typeof window !== 'undefined' && window.__EDULET_HIDE_MS) || 15000;
+const silenceMs = () => (typeof window !== 'undefined' && window.__EDULET_SILENCE_MS) || 70000;
 
 const RANK = { read: 1, comment: 2, write: 3, moderate: 4, admin: 5 };
 const EVENTS = [
-  'hello', 'presence', 'board.updated', 'board.deleted', 'members.updated',
+  'hello', 'ping', 'presence', 'board.updated', 'board.deleted', 'members.updated',
   'section.created', 'section.updated', 'section.moved', 'section.deleted',
   'post.created', 'post.updated', 'post.moved', 'post.deleted',
   'comment.created', 'comment.deleted', 'reaction.updated',
@@ -55,6 +59,12 @@ export class BoardController {
     this._destroyed = false;
     this._needResync = false;
     this._reloading = null;
+    this._lastEventAt = Date.now();
+    this._suspended = false; // stream closed on purpose (tab hidden / page hidden)
+    this._hideTimer = null;
+    this._pushedDetail = false; // the open post's history entry was pushed by openPost()
+    this._wantedPost = null; // post id taken from the URL, applied once the snapshot has arrived
+    this._bindLifecycle();
     this._lastMeId = store.me ? store.me.id : null;
     this._unsubMe = store.subscribe('me', () => {
       this.state.me = store.me;
@@ -97,10 +107,71 @@ export class BoardController {
   destroy() {
     this._destroyed = true;
     clearTimeout(this._timer);
+    this._unbindLifecycle();
     if (this._es) this._es.close();
     this._es = null;
     this._unsubMe && this._unsubMe();
     this._subs.clear();
+  }
+
+  /* ───────── connection lifecycle: hidden tabs, silent links, going offline ───────── */
+  _bindLifecycle() {
+    // A browser allows ~6 connections per host and every open board holds one stream: park the stream of tabs nobody
+    // is looking at (otherwise the 6th tab never loads), and catch up when the tab comes back.
+    this._onVis = () => {
+      clearTimeout(this._hideTimer);
+      if (document.hidden) this._hideTimer = setTimeout(() => this._suspend(), hideMs());
+      else this._resume();
+    };
+    this._onHide = () => this._suspend();
+    this._onShow = (e) => {
+      if (e.persisted || this._suspended) this._resume();
+    };
+    this._onOnline = () => this._resume(true);
+    document.addEventListener('visibilitychange', this._onVis);
+    window.addEventListener('pagehide', this._onHide);
+    window.addEventListener('pageshow', this._onShow);
+    window.addEventListener('online', this._onOnline);
+    // Silent-death watchdog: the server sends a named `ping` event every 25 s, so 70 s without any event means the
+    // link is dead even though the browser has not noticed.
+    this._watchdog = setInterval(() => {
+      if (this._suspended || !this._es || this.state.status !== 'ready') return;
+      if (Date.now() - this._lastEventAt > silenceMs()) this._restartStream();
+    }, 1000);
+  }
+  _unbindLifecycle() {
+    clearInterval(this._watchdog);
+    clearTimeout(this._hideTimer);
+    document.removeEventListener('visibilitychange', this._onVis);
+    window.removeEventListener('pagehide', this._onHide);
+    window.removeEventListener('pageshow', this._onShow);
+    window.removeEventListener('online', this._onOnline);
+  }
+  _suspend() {
+    if (this._suspended || this._destroyed || this.state.status !== 'ready') return;
+    this._suspended = true;
+    this._needResync = true;
+    clearTimeout(this._timer);
+    if (this._es) this._es.close();
+    this._es = null;
+    this.state.connected = false; // no UI emit: nobody is looking
+  }
+  _resume(force = false) {
+    if (this._destroyed || this.state.status !== 'ready') return;
+    if (!force && !this._suspended && this._es) return;
+    this._suspended = false;
+    this._restartStream();
+  }
+  _restartStream() {
+    if (this._destroyed) return;
+    if (this._es) this._es.close();
+    this._es = null;
+    clearTimeout(this._timer);
+    this._needResync = true; // the new stream's onopen refetches the snapshot
+    this._lastEventAt = Date.now();
+    this.state.connected = false;
+    this._emit('ui');
+    this._connect();
   }
 
   subscribe(fn) {
@@ -121,7 +192,8 @@ export class BoardController {
   }
 
   /* ───────── snapshot / SSE ───────── */
-  async _fetchSnapshot() {
+  /** `resync` marks a snapshot fetched to catch up after a reconnect: open detail views reload their comments. */
+  async _fetchSnapshot({ resync = false } = {}) {
     try {
       const r = await api.get(`/boards/${encodeURIComponent(this.slug)}`);
       const s = this.state;
@@ -138,13 +210,19 @@ export class BoardController {
       this.state.status = e instanceof ApiError && (e.status === 404 || e.status === 403 || e.status === 401) ? 'notfound' : 'error';
       this.state.error = e;
     }
-    this._emit('snapshot');
+    this._emit('snapshot', { resync });
+    // a post named in the URL before the snapshot existed
+    if (this._wantedPost != null && this.state.status === 'ready') {
+      const w = this._wantedPost;
+      this._wantedPost = null;
+      this.syncFromUrl(w);
+    }
   }
 
   _reload({ reconnect = false } = {}) {
     if (this._reloading) return this._reloading;
     this._reloading = (async () => {
-      await this._fetchSnapshot();
+      await this._fetchSnapshot({ resync: true });
       if (reconnect) {
         if (this._es) this._es.close();
         this._es = null;
@@ -159,12 +237,13 @@ export class BoardController {
     const es = new EventSource(`/api/boards/${encodeURIComponent(this.slug)}/events`);
     this._es = es;
     es.onopen = () => {
+      this._lastEventAt = Date.now();
       this.state.connected = true;
       this._retry = 0;
       this._resolveFirst();
       if (this._needResync) {
         this._needResync = false;
-        this._fetchSnapshot();
+        this._fetchSnapshot({ resync: true });
       }
       this._emit('ui');
     };
@@ -181,13 +260,14 @@ export class BoardController {
         this._timer = setTimeout(async () => {
           if (this._destroyed) return;
           this._needResync = false;
-          await this._fetchSnapshot();
+          await this._fetchSnapshot({ resync: true });
           if (this.state.status === 'ready') this._connect();
         }, wait);
       }
     };
     for (const type of EVENTS) {
       es.addEventListener(type, (ev) => {
+        this._lastEventAt = Date.now();
         let data = {};
         try {
           data = JSON.parse(ev.data || '{}');
@@ -253,6 +333,8 @@ export class BoardController {
         const p = this.postById(d.postId);
         if (!p) return;
         p.reactions = mergeReactions(p.reactions, d.reactions);
+        // I reacted from another tab/device: the event carries counts only, so ask for my own state
+        if (d.by && store.me && d.by === store.me.id && d.origin !== clientId) this._refreshMine(d.postId);
         return this._emit('post', { post: p });
       }
     }
@@ -385,13 +467,29 @@ export class BoardController {
         try {
           const u = await store.guest(name);
           settled = true;
+          clearInterval(countdown);
           resolve(u);
           close();
         } catch (e) {
-          err.textContent = e.message || '입장하지 못했어요.';
+          if (e.code === 'rate_limited' && e.retryAfter) {
+            // a whole class may be joining at once: wait the hinted time and retry automatically
+            let left = Math.min(e.retryAfter, 60);
+            clearInterval(countdown);
+            const tick = () => {
+              err.textContent = `지금 참여하는 사람이 많아요. ${left}초 뒤에 자동으로 다시 시도해요.`;
+              if (left-- <= 0) {
+                clearInterval(countdown);
+                err.textContent = '';
+                submit(close);
+              }
+            };
+            tick();
+            countdown = setInterval(tick, 1000);
+          } else err.textContent = e.message || '입장하지 못했어요.';
         }
         return false;
       };
+      let countdown = null;
       const m = modal({
         title: '이름을 알려 주세요', size: 'sm',
         body: h('form', { onSubmit: (e) => { e.preventDefault(); submit(m.close); } },
@@ -401,16 +499,44 @@ export class BoardController {
           { label: '취소', kind: 'secondary', onClick: () => {} },
           { label: '참여하기', kind: 'primary', keepOpen: true, onClick: (close) => submit(close) },
         ],
-        onClose: () => !settled && reject(new ApiError(0, 'cancelled', '취소했어요.')),
+        onClose: () => {
+          clearInterval(countdown);
+          if (!settled) reject(new ApiError(0, 'cancelled', '취소했어요.'));
+        },
       });
     });
   }
 
+  /** Run `fn` as a signed-in user; if the session turned out to be gone (signed out in another tab) ask again once. */
+  async _auth(fn) {
+    await this.ensureIdentity();
+    try {
+      return await fn();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        await this.ensureIdentity();
+        return fn();
+      }
+      throw e;
+    }
+  }
+
   /* ───────── post actions ───────── */
   async createPost(data) {
-    await this.ensureIdentity();
-    const r = await api.post(`/boards/${encodeURIComponent(this.slug)}/posts`, data);
+    const r = await this._auth(() => api.post(`/boards/${encodeURIComponent(this.slug)}/posts`, data));
     return this._upsertPost(r.post);
+  }
+
+  async _refreshMine(id) {
+    try {
+      const r = await api.get(`/posts/${id}/reactions`);
+      const p = this.postById(id);
+      if (!p) return;
+      p.reactions = mergeReactions(null, r.reactions);
+      this._emit('post', { post: p });
+    } catch {
+      /* the next snapshot will fix it */
+    }
   }
 
   async updatePost(id, patch) {
@@ -520,8 +646,7 @@ export class BoardController {
   }
 
   async addComment(id, body) {
-    await this.ensureIdentity();
-    const r = await api.post(`/posts/${id}/comments`, { body });
+    const r = await this._auth(() => api.post(`/posts/${id}/comments`, { body }));
     const p = this.postById(id);
     if (p) p.commentCount = r.commentCount;
     this._emit('comments', { postId: id, comment: r.comment, commentCount: r.commentCount, deleted: false, mine: true });
@@ -564,13 +689,11 @@ export class BoardController {
 
   /* ───────── attachments ───────── */
   async upload(file, onProgress) {
-    await this.ensureIdentity();
-    const r = await api.upload(this.slug, file, onProgress);
+    const r = await this._auth(() => api.upload(this.slug, file, onProgress));
     return { kind: r.kind, uploadId: r.id, name: r.name, url: r.url, mime: r.mime, size: r.size };
   }
   async linkPreview(url) {
-    await this.ensureIdentity();
-    return api.post('/link-preview', { url });
+    return this._auth(() => api.post('/link-preview', { url }));
   }
 
   /* ───────── board ───────── */
@@ -589,27 +712,56 @@ export class BoardController {
     this._emit('ui', { search: true });
   }
 
+  _boardUrl() {
+    return `/b/${encodeURIComponent(this.slug)}`;
+  }
+  /** A link pointed at a post that is gone / hidden / not a number: say so and fall back to the board. */
+  _missingPost() {
+    this.state.openPostId = null;
+    this._pushedDetail = false;
+    router.replace(this._boardUrl());
+    toast('찾을 수 없는 글이에요. 지워졌거나 볼 수 없는 글일 수 있어요.', 'info');
+    this._emit('ui', { openPost: true, missingPost: true });
+  }
+
   openPost(id) {
     const s = this.state;
     id = Number(id);
+    if (s.status === 'ready' && !this.visiblePosts().some((p) => p.id === id)) return this._missingPost();
     const wasOpen = s.openPostId != null;
     s.openPostId = id;
-    const path = `/b/${encodeURIComponent(this.slug)}/p/${id}`;
+    const path = `${this._boardUrl()}/p/${id}`;
     if (wasOpen) router.replace(path);
-    else router.push(path);
+    else {
+      router.push(path);
+      this._pushedDetail = true; // closing goes back one entry instead of leaving a dead duplicate behind
+    }
     this._emit('ui', { openPost: true });
   }
   closePost() {
     if (this.state.openPostId == null) return;
     this.state.openPostId = null;
-    router.replace(`/b/${encodeURIComponent(this.slug)}`);
     this._emit('ui', { openPost: true });
+    if (this._pushedDetail) {
+      this._pushedDetail = false;
+      history.back(); // popstate → router → syncFromUrl(null) is then a no-op
+    } else router.replace(this._boardUrl());
   }
   /** Called by the router (back/forward, deep link) — updates state without touching the URL. */
   syncFromUrl(postId) {
-    const id = postId == null || postId === '' ? null : Number(postId);
-    if (this.state.openPostId === id) return;
-    this.state.openPostId = id;
+    const s = this.state;
+    const raw = postId == null || postId === '' ? null : Number(postId);
+    if (raw !== null && !Number.isFinite(raw)) return this._missingPost();
+    const id = raw;
+    if (id !== null && s.status !== 'ready') {
+      this._wantedPost = id; // applied when the snapshot arrives
+      return;
+    }
+    if (id !== null && !this.visiblePosts().some((p) => p.id === id)) return this._missingPost();
+    // A deep link / back-forward landing: we did not push this entry, so closing must replace the URL, not go back.
+    this._pushedDetail = false;
+    if (s.openPostId === id) return;
+    s.openPostId = id;
     this._emit('ui', { openPost: true });
   }
   openSlideshow() {

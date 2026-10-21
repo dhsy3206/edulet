@@ -36,7 +36,9 @@ describe('SSE basics', () => {
     assert.deepEqual(Object.keys(s.events[0].data.presence[0]).sort(), ['avatarColor', 'displayName', 'id']);
     for (let i = 0; i < 50 && !s.raw.includes(': ping'); i++) await sleep(20);
     assert.ok(s.raw.includes(': ping\n\n'), 'ping comment arrives');
-    assert.equal(s.events.filter((e) => e.type === 'ping').length, 0, 'pings are comments, not events');
+    // …and as a named event, so a browser EventSource (which never sees comments) can detect a silently dead link
+    for (let i = 0; i < 50 && !s.events.some((e) => e.type === 'ping'); i++) await sleep(20);
+    assert.ok(s.events.some((e) => e.type === 'ping'), 'named ping event arrives');
   });
 
   it('anonymous visitors can connect to a link board; private boards answer 404 like missing ones', async () => {

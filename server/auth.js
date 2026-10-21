@@ -83,6 +83,13 @@ function limitAuth(app, c) {
   }
 }
 
+/** Guest sign-ins get their own, much larger bucket: 30 students behind one school IP must all be able to join. */
+function limitGuest(app, c) {
+  if (!app.rate.hit('guest:' + clientIp(app, c.req), app.config.guestRateMax)) {
+    throw new HttpError(429, 'rate_limited', '지금 참여하는 사람이 너무 많아요. 잠시 뒤에 다시 해 주세요.', { 'Retry-After': '30' });
+  }
+}
+
 const FAIL_WINDOW_MS = 15 * 60 * 1000;
 
 /**
@@ -164,7 +171,7 @@ export function registerAuth(app) {
   });
 
   router.add('POST', '/auth/guest', async (c) => {
-    limitAuth(app, c);
+    limitGuest(app, c);
     const b = await c.body();
     const displayName = needLine(b.displayName, '이름', 1, LIMITS.displayName);
     if (c.user) {

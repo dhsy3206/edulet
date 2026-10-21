@@ -257,8 +257,8 @@ describe('auth: rate limit and proxy cookies', () => {
     try {
       const c = new Client(app);
       for (let i = 0; i < 20; i++) {
-        const r = await c.post('/api/auth/guest', { displayName: `g${i}` });
-        assert.ok(r.status === 201 || r.status === 200, `attempt ${i + 1}: ${r.status}`);
+        const r = await c.post('/api/auth/login', { username: `nobody${i}`, password: 'password1' });
+        assert.equal(r.status, 401, `attempt ${i + 1}: ${r.status}`);
       }
       const r = await new Client(app).post('/api/auth/login', { username: 'someone', password: 'password1' });
       assert.equal(r.status, 429);
@@ -266,6 +266,22 @@ describe('auth: rate limit and proxy cookies', () => {
       assert.ok(r.headers.get('retry-after'));
       assert.equal((await new Client(app).post('/api/auth/register', { username: 'zzzzz', password: 'password1', displayName: 'z' })).status, 429);
       assert.equal((await new Client(app).get('/api/auth/me')).status, 200, 'non-auth endpoints are unaffected');
+    } finally { await app.close(); }
+  });
+
+  it('guest sign-ins have their own larger bucket: a class behind one IP can join while logins stay strict', async () => {
+    const app = await startApp({ authRateLimit: 3, config: { guestRateMax: 8 } });
+    try {
+      for (let i = 0; i < 8; i++) {
+        const r = await new Client(app).post('/api/auth/guest', { displayName: `학생${i}` });
+        assert.equal(r.status, 201, `guest ${i + 1}: ${r.status}`);
+      }
+      const over = await new Client(app).post('/api/auth/guest', { displayName: '아홉째' });
+      assert.equal(over.status, 429);
+      assert.equal(over.json.error.code, 'rate_limited');
+      assert.ok(over.headers.get('retry-after'));
+      // the (smaller) login bucket was never touched by the guests
+      assert.equal((await new Client(app).post('/api/auth/login', { username: 'who_ever', password: 'password1' })).status, 401);
     } finally { await app.close(); }
   });
 
