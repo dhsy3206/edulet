@@ -34,7 +34,7 @@ data/          (gitignore) edulet.db, uploads/
 | `UPLOAD_RATE` | 30 | 사용자당 10분에 받는 업로드 요청 수 |
 | `UPLOAD_QUOTA_MB` | 300 | 사용자당 24시간에 올릴 수 있는 용량(MB) |
 | `SSE_PER_USER` | 10 | 로그인 사용자 한 명의 열린 실시간 연결 수 |
-| `SSE_PER_IP` | 60 | 접속 주소 하나의 열린 실시간 연결 수 |
+| `SSE_PER_IP` | 300 | 접속 주소 하나의 열린 실시간 연결 수 |
 | `MAX_CONNECTIONS` | 2000 | http 서버 소켓 상한(`server.maxConnections`) |
 | `WRITE_RATE` | 240 | 사용자당 분당 쓰기(게시물·댓글·반응·섹션) 수 |
 | `BOARD_MAX_POSTS` | 5000 | 보드 하나의 게시물 수 |
@@ -187,7 +187,7 @@ pending 게시물은 **moderate 이상과 작성자 본인에게만** 목록·�
 
 ## 6. 실시간 (SSE)
 
-`GET /api/boards/:slug/events` — `text/event-stream`, 보드를 볼 수 있어야 연결(로그인 안 한 link 접속자도 가능). 열린 연결이 로그인 사용자당 10개(`SSE_PER_USER`)·접속 주소당 60개(`SSE_PER_IP`)를 넘으면 429 `too_many_connections`(JSON, 스트림 아님; 연결이 끊기면 자리가 돌아온다). 25초마다 `: ping` 주석 — 이때 연결의 **세션이 아직 유효한지**(삭제·만료)도 확인해 무효면 연결을 닫는다. 연결 직후 `hello` 이벤트. 이벤트 형식 `event: <type>\ndata: <JSON>\n\n`. 쓰기 요청이 `X-Client-Id` 헤더(클라이언트가 만든 랜덤 문자열)를 보내면 이벤트의 `origin` 에 그대로 실어 준다(자기 에코 무시용).
+`GET /api/boards/:slug/events` — `text/event-stream`, 보드를 볼 수 있어야 연결(로그인 안 한 link 접속자도 가능). 열린 연결이 로그인 사용자당 10개(`SSE_PER_USER`)·접속 주소당 300개(`SSE_PER_IP`; 학교·교실이 공용 IP 하나를 쓰는 경우를 고려한 값)를 넘으면 429 `too_many_connections`(JSON, 스트림 아님; 연결이 끊기면 자리가 돌아온다). 25초마다 `: ping` 주석과 `ping` 명명 이벤트(브라우저 EventSource 는 주석을 못 보므로 침묵 감시용; 클라이언트는 70초 동안 아무 이벤트도 없으면 재연결) — 이때 연결의 **세션이 아직 유효한지**(삭제·만료)도 확인해 무효면 연결을 닫는다. 연결 직후 `hello` 이벤트. 이벤트 형식 `event: <type>\ndata: <JSON>\n\n`. 쓰기 요청이 `X-Client-Id` 헤더(클라이언트가 만든 랜덤 문자열)를 보내면 이벤트의 `origin` 에 그대로 실어 준다(자기 에코 무시용).
 
 | type | data |
 |---|---|

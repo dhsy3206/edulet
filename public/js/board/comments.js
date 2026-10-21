@@ -4,10 +4,10 @@ import { icon, avatar, timeAgo, fullTime, confirmDialog } from '../lib/ui.js';
 import { store } from '../lib/store.js';
 import { renderRich } from '../lib/markdown.js';
 import { LIMITS } from '../lib/constants.js';
-import { isIme, autosize } from './util.js';
+import { isIme, autosize, isBlank, errorMessage } from './util.js';
 
 /**
- * createComments(ctx, { onAdded }) → { listEl, formEl, load(postId), onEvent(ev), refreshAccess(), destroy() }
+ * createComments(ctx, { onAdded }) → { listEl, formEl, load(postId), refresh(), count(), onEvent(ev), refreshAccess(), destroy() }
  * listEl = heading + list (goes in the panel's scroll area); formEl = pinned input area.
  */
 export function createComments(ctx, { onAdded } = {}) {
@@ -17,6 +17,7 @@ export function createComments(ctx, { onAdded } = {}) {
   let loaded = false;
   const nodes = new Map(); // comment id → element
   const seen = new Set();
+  let live = null; // while refresh() is fetching: ids that arrived/vanished through events (they win over the fetched list)
 
   const countEl = h('span', { class: 'b-comments-count' });
   const head = h('h3', { class: 'b-comments-head' }, '댓글 ', countEl);
@@ -27,12 +28,13 @@ export function createComments(ctx, { onAdded } = {}) {
   const ta = h('textarea', { class: 'b-comment-input', name: 'comment', rows: 1, maxlength: LIMITS.comment, placeholder: '댓글을 입력하세요', 'aria-label': '댓글 입력', 'data-role': 'comment-input' });
   const sendBtn = h('button', { type: 'button', class: 'b-comment-send', 'aria-label': '댓글 보내기', title: '보내기 (Enter)', 'data-role': 'comment-send', onClick: () => send() }, icon('send', { size: 18 }));
   const row = h('div', { class: 'b-comment-row' }, ta, sendBtn);
+  const sendErr = h('p', { class: 'form-error b-comment-err', role: 'alert' });
   const lock = h('p', { class: 'b-comment-lock' });
-  const formEl = h('div', { class: 'b-comment-form' }, row, lock);
+  const formEl = h('div', { class: 'b-comment-form' }, row, sendErr, lock);
   let sending = false;
 
   function refreshSend() {
-    sendBtn.disabled = sending || !ta.value.trim();
+    sendBtn.disabled = sending || isBlank(ta.value);
   }
   function refreshAccess() {
     const off = ctl.state.board && ctl.state.board.settings.comments === 'off';
@@ -92,6 +94,8 @@ export function createComments(ctx, { onAdded } = {}) {
   async function load(id) {
     postId = id;
     const my = ++token;
+    live = null;
+    sendErr.textContent = '';
     loaded = false;
     nodes.clear();
     seen.clear();
@@ -116,9 +120,47 @@ export function createComments(ctx, { onAdded } = {}) {
     }
   }
 
+  /**
+   * Re-read the list of the open post and merge it in place (after a reconnect/resync snapshot): comments that
+   * were missed appear, deleted ones vanish, the header count follows. No flicker, and the half-typed comment
+   * in the input is never touched.
+   */
+  async function refresh() {
+    if (postId == null) return;
+    if (!loaded) return load(postId);
+    const my = token;
+    const id = postId;
+    const mine = (live = { added: new Set(), deleted: new Set() });
+    try {
+      const cs = await ctl.loadComments(id);
+      if (my !== token || live !== mine) return;
+      const keep = new Set(cs.map((c) => c.id));
+      for (const [cid, n] of [...nodes]) {
+        if (!keep.has(cid) && !mine.added.has(cid)) {
+          n.remove();
+          nodes.delete(cid);
+          seen.delete(cid);
+        }
+      }
+      for (const c of cs) if (!seen.has(c.id) && !mine.deleted.has(c.id)) add(c);
+      // server order (oldest first): only touch the DOM when the order actually differs
+      const order = cs.map((c) => nodes.get(c.id)).filter(Boolean);
+      const now = [...list.children];
+      if (order.length === now.length && order.some((n, i) => n !== now[i])) order.forEach((n) => list.appendChild(n));
+      setCount(nodes.size);
+      renderStatus();
+      refreshAccess();
+    } catch {
+      /* keep what is on screen; the next snapshot tries again */
+    } finally {
+      if (live === mine) live = null;
+    }
+  }
+
   function onEvent(ev) {
     if (ev.type !== 'comments' || ev.postId !== postId || !loaded) return;
     if (ev.deleted) {
+      if (live) live.deleted.add(ev.commentId);
       const n = nodes.get(ev.commentId);
       if (n) {
         n.remove();
@@ -126,6 +168,7 @@ export function createComments(ctx, { onAdded } = {}) {
         seen.delete(ev.commentId);
       }
     } else if (ev.comment) {
+      if (live) live.added.add(ev.comment.id);
       const added = add(ev.comment);
       if (added && onAdded && ev.mine) onAdded();
     }
@@ -136,12 +179,23 @@ export function createComments(ctx, { onAdded } = {}) {
 
   async function send() {
     if (sending || postId == null) return;
-    const text = ta.value.trim();
-    if (!text) return;
+    const raw = ta.value;
+    if (isBlank(raw)) return;
+    const text = raw.trim();
+    const id = postId;
+    const my = token;
     sending = true;
+    sendErr.textContent = '';
     refreshSend();
-    const c = await ctx.run(() => ctl.addComment(postId, text));
+    let c = null;
+    let failed = null;
+    try {
+      c = await ctl.addComment(id, text); // api.js ends every request within 20s (ApiError 'timeout')
+    } catch (e) {
+      failed = e;
+    }
     sending = false;
+    if (my !== token) return refreshSend(); // another post is open now; a late success still reaches its list through SSE
     if (c) {
       ta.value = '';
       autosize(ta, 120);
@@ -151,6 +205,12 @@ export function createComments(ctx, { onAdded } = {}) {
       renderStatus();
       refreshAccess();
       if (onAdded) onAdded();
+    } else if (failed && failed.code !== 'cancelled') {
+      // keep the text, say what happened under the box, and let the user retry
+      let msg = errorMessage(failed, '댓글을 보내지 못했어요. 다시 시도해 주세요.');
+      if (failed.code === 'timeout' || failed.code === 'network') msg += ' 이미 올라갔을 수 있으니 목록도 확인해 주세요.';
+      sendErr.textContent = msg;
+      ctx.fail(failed);
     }
     refreshSend();
     ta.focus();
@@ -164,6 +224,7 @@ export function createComments(ctx, { onAdded } = {}) {
   });
   ta.addEventListener('input', () => {
     autosize(ta, 120);
+    sendErr.textContent = '';
     refreshSend();
   });
   refreshSend();
@@ -173,6 +234,10 @@ export function createComments(ctx, { onAdded } = {}) {
     listEl,
     formEl,
     load,
+    refresh,
+    /** rendered comment count, or null while the list has not loaded */
+    count: () => (loaded ? nodes.size : null),
+    isLoaded: () => loaded,
     onEvent,
     refreshAccess,
     focusInput: () => ta.focus(),

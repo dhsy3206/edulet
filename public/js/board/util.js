@@ -1,4 +1,23 @@
 // Small shared helpers for the board canvas (no DOM-building of user data here).
+/* ───────── text emptiness (UX-09) ───────── */
+// Zero-width / bidi-control characters render as nothing: a title made only of them must count as empty.
+const INVISIBLE = /[\u200b-\u200f\u2060\ufeff\u202a-\u202e]/g;
+export const stripInvisible = (s) => String(s ?? '').replace(INVISIBLE, '');
+export const isBlank = (s) => stripInvisible(s).trim() === '';
+/** Text to send: '' when it only holds whitespace/invisible characters, else trimmed (invisible chars inside are kept: ZWJ builds emoji). */
+export const cleanText = (s) => (isBlank(s) ? '' : String(s).trim());
+
+/* ───────── failures shown to the user (UX-03) ───────── */
+/** A readable Korean sentence for any failure (server codes already carry Korean text; add the wait for 429s). */
+export function errorMessage(e, fallback = '처리하지 못했어요. 다시 시도해 주세요.') {
+  if (!e) return fallback;
+  let m = e.message || fallback;
+  if (e.code === 'timeout' && !/[가-힣]/.test(m)) m = '서버가 응답하지 않아요. 잠시 뒤에 다시 시도해 주세요.';
+  if ((e.code === 'rate_limited' || e.status === 429) && Number(e.retryAfter) > 0 && !/\d+\s*초/.test(m)) {
+    m += ` (${Math.ceil(Number(e.retryAfter))}초 뒤에 다시 할 수 있어요)`;
+  }
+  return m;
+}
 
 /** Resolve to an absolute http(s) URL string, or null (blocks javascript:, data:, etc.). */
 export function safeUrl(u) {
@@ -28,6 +47,18 @@ export function hostOf(u) {
 }
 
 export const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+/** Run `fn` while the controller's search filter is cleared (no event is emitted) — to read the unfiltered card order. */
+export function withoutSearch(ctl, fn) {
+  const st = ctl.state;
+  const q = st.search;
+  st.search = '';
+  try {
+    return fn();
+  } finally {
+    st.search = q;
+  }
+}
 
 /** requestAnimationFrame coalescing scheduler. */
 export function rafScheduler(fn) {

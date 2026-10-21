@@ -6,3 +6,4 @@ Thumbs.db
 .env
 coverage/
 e2e/out/
+.claude/

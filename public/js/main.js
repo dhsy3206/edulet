@@ -6,15 +6,33 @@ import { homePage } from './views/home.js';
 import { dashboardPage } from './views/dashboard.js';
 import { boardPage } from './views/board-page.js';
 import { notFoundPage } from './views/not-found.js';
+import { installAvatarContrast } from './board/tone.js';
+import { errorMessage } from './board/util.js';
 
 // Safety net: an API failure that nobody caught still reaches the user instead of vanishing.
 window.addEventListener('unhandledrejection', (ev) => {
   const e = ev.reason;
   if (e && e.name === 'ApiError') {
     ev.preventDefault();
-    if (e.code !== 'cancelled') toast(e.message, 'error');
+    if (e.code !== 'cancelled') toast(errorMessage(e), 'error');
   }
 });
+
+// A file dropped outside a drop zone would make the browser open it and navigate away, losing unsent drafts.
+// Real drop zones (composer, chat input) call preventDefault themselves first, so only the leftovers land here.
+const carriesFiles = (e) => !!e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files');
+const inFileInput = (e) => !!(e.target && e.target.closest && e.target.closest('input[type="file"]'));
+window.addEventListener('dragover', (e) => {
+  if (!carriesFiles(e) || e.defaultPrevented || inFileInput(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'none'; // shows "not here" instead of a misleading copy cursor
+});
+window.addEventListener('drop', (e) => {
+  if (carriesFiles(e) && !e.defaultPrevented && !inFileInput(e)) e.preventDefault();
+});
+
+// Avatar initials: dark or white ink, whichever reads on the avatar's own colour (UX-15)
+installAvatarContrast();
 
 async function boot() {
   const app = document.getElementById('app');

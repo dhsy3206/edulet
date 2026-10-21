@@ -15,7 +15,8 @@ import { createWall } from './layouts/wall.js';
 import { createSectioned } from './layouts/sectioned.js';
 import { createCanvas } from './layouts/canvas.js';
 import { createBackchannel } from './layouts/backchannel.js';
-import { rafScheduler, placeSig } from './util.js';
+import { rafScheduler, placeSig, errorMessage } from './util.js';
+import { cachedTone, loadTone } from './tone.js';
 
 const LAYOUTS = {
   wall: createWall,
@@ -64,7 +65,7 @@ export function mountBoard(rootEl, ctl) {
     format: () => (ctl.state.board && ctl.state.board.format) || 'wall',
     fail(e) {
       if (e && e.code === 'cancelled') return;
-      toast((e && e.message) || '요청을 처리하지 못했어요.', 'error');
+      toast(errorMessage(e, '요청을 처리하지 못했어요.'), 'error');
     },
     async run(fn) {
       try {
@@ -127,7 +128,9 @@ export function mountBoard(rootEl, ctl) {
   function applyChrome(board) {
     const wp = board.wallpaper || 'green';
     const known = WALLPAPERS.includes(wp);
-    const dark = !known || DARK_WALLPAPERS.includes(wp);
+    // custom image: tone from its measured luminance (board/tone.js); dark until that is known or if it cannot be read
+    if (!known && !cachedTone(wp)) loadTone(wp).then(() => schedule());
+    const dark = known ? DARK_WALLPAPERS.includes(wp) : cachedTone(wp) !== 'light';
     const cls = `b-root b-fmt-${board.format} font-${board.font || 'sans'}${board.colorScheme === 'dark' ? ' scheme-dark' : ''}`;
     if (root.className !== cls) root.className = cls;
     root.dataset.wp = known ? wp : 'custom';
@@ -212,6 +215,9 @@ export function mountBoard(rootEl, ctl) {
     if (destroyed) return;
     switch (ev.type) {
       case 'snapshot':
+        detail.onSnapshot(ev);
+        needSync = true;
+        break;
       case 'sections':
       case 'posts':
         needSync = true;

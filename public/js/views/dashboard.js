@@ -5,11 +5,12 @@ import { store } from '../lib/store.js';
 import { router } from '../lib/router.js';
 import { icon, popover, timeAgo, fullTime } from '../lib/ui.js';
 import { FORMAT_LABELS, ROLE_LABELS } from '../lib/constants.js';
-import { FORMAT_ICON, boardPath, isGuest, redirect, wallpaperProps } from './common.js';
+import { FORMAT_ICON, boardPath, isGuest, redirect, reportError, wallpaperProps } from './common.js';
+import { loadTone } from '../board/tone.js';
 import { openAuthModal } from './auth.js';
 import { appHeader } from './shell.js';
 import { openCreateBoardModal, openGuestCannotCreate } from './create-board.js';
-import { copyBoardLink, deleteBoardFlow, duplicateBoardFlow } from './board-actions.js';
+import { copyBoardLink, deleteBoardFlow, duplicateBoardFlow, leaveBoardFlow } from './board-actions.js';
 
 function stateBox({ iconName, title, text, actions }) {
   return h('div', { class: 'app-state dash-state' },
@@ -53,7 +54,7 @@ export function dashboardPage(root, query = {}) {
       { label: '열기', icon: 'external-link', onClick: () => router.go(boardPath(b.slug)) },
       { label: '링크 복사', icon: 'link', onClick: () => copyBoardLink(b.slug) },
       { label: '복제', icon: 'copy', onClick: () => duplicateBoardFlow(b) },
-      owner ? { separator: true } : null,
+      { separator: true },
       owner ? {
         label: '삭제', icon: 'trash', danger: true,
         onClick: async () => {
@@ -62,7 +63,21 @@ export function dashboardPage(root, query = {}) {
             render();
           }
         },
-      } : null,
+      } : {
+        // a member who is not the owner can leave; the owner keeps "삭제" (the server refuses owner_cannot_leave)
+        label: '보드 나가기', icon: 'logout', danger: true,
+        onClick: async () => {
+          try {
+            if (await leaveBoardFlow(b, store.me && store.me.id)) {
+              boards = boards.filter((x) => x.slug !== b.slug);
+              render();
+              refreshQuiet(); // then re-read the list from the server
+            }
+          } catch (e) {
+            reportError(e, '보드에서 나가지 못했어요. 다시 시도해 주세요.');
+          }
+        },
+      },
     ]);
   }
 
@@ -74,9 +89,12 @@ export function dashboardPage(root, query = {}) {
       type: 'button', class: 'btn-icon sm dash-more', 'aria-label': `“${b.title}” 메뉴`, 'aria-haspopup': 'menu',
       onClick: () => openMenu(more, b),
     }, icon('more', { size: 18 }));
+    const thumb = h('a', { class: ['dash-thumb', wp.cls, wp.dark && 'dark'], href: boardPath(b.slug), 'data-link': true, style: wp.style, 'aria-label': `${b.title} 열기` },
+      h('span', { class: 'dash-thumb-title' }, b.title));
+    // a light uploaded photo must not carry white text: look at the image once, then fix the thumb's tone
+    if (wp.id === 'custom' && !wp.toneKnown) loadTone(wp.url).then(() => thumb.classList.toggle('dark', wallpaperProps(b.wallpaper).dark));
     return h('article', { class: 'dash-card', dataset: { slug: b.slug } },
-      h('a', { class: ['dash-thumb', wp.cls, wp.dark && 'dark'], href: boardPath(b.slug), 'data-link': true, style: wp.style, 'aria-label': `${b.title} 열기` },
-        h('span', { class: 'dash-thumb-title' }, b.title)),
+      thumb,
       more,
       h('div', { class: 'dash-meta' },
         h('div', { class: 'dash-meta-row' },
@@ -155,6 +173,13 @@ export function dashboardPage(root, query = {}) {
       wantNew = false;
       router.replace('/dashboard');
       startCreate();
+    }
+  }
+  async function refreshQuiet() {
+    const r = await guardLoad();
+    if (r && !destroyed && state === 'ready') {
+      boards = r.boards || [];
+      render();
     }
   }
   async function guardLoad() {

@@ -4,7 +4,7 @@ import { h } from '../lib/h.js';
 import { icon, modal, confirmDialog, toast, focusables } from '../lib/ui.js';
 import { LIMITS, POST_COLORS, POST_COLOR_LABELS } from '../lib/constants.js';
 import { createAttachField } from './attach-field.js';
-import { isIme } from './util.js';
+import { isIme, isBlank, cleanText, errorMessage } from './util.js';
 
 const drafts = new Map(); // board slug → unsent draft kept in memory
 
@@ -65,6 +65,8 @@ export function createComposer(ctx) {
     let color = edit ? post.color || null : draft ? draft.color || null : null;
     let busy = false;
     let closed = false;
+    let attempt = 0; // bumped on every submit and on close: a late answer from an abandoned request is ignored
+    let pendingDraft = null; // draft stored when the user leaves while a request is still in flight
 
     const titleId = 'cmp' + Math.random().toString(36).slice(2, 7);
     const title = h('input', { class: 'b-compose-title', name: 'title', type: 'text', maxlength: LIMITS.postTitle, placeholder: '제목', 'aria-label': '제목', autocomplete: 'off', value: edit ? post.title : draft ? draft.title : '' });
@@ -177,13 +179,13 @@ export function createComposer(ctx) {
 
     /* content / dirty state */
     function hasContent() {
-      return !!(title.value.trim() || body.value.trim() || field.hasAttachment());
+      return !!(!isBlank(title.value) || !isBlank(body.value) || field.hasAttachment());
     }
     function isDirty() {
       if (edit) {
         return title.value !== post.title || body.value !== post.body || (color || null) !== (post.color || null) || (secSel ? secId !== (post.sectionId ?? null) : false) || field.value() !== undefined;
       }
-      return !!(title.value.trim() || body.value.trim() || field.hasAttachment());
+      return hasContent();
     }
     function refresh() {
       submitBtn.disabled = busy || field.busy() || !hasContent();
@@ -265,12 +267,14 @@ export function createComposer(ctx) {
     async function submit() {
       if (busy || field.busy() || !hasContent()) return;
       busy = true;
+      const my = ++attempt;
       submitBtn.disabled = true;
       submitBtn.textContent = edit ? '저장 중…' : '올리는 중…';
       err.textContent = '';
+      let outcome;
       try {
-        const t = title.value.trim();
-        const b = body.value.replace(/\s+$/g, '');
+        const t = cleanText(title.value);
+        const b = isBlank(body.value) ? '' : body.value.replace(/\s+$/g, '');
         const att = field.value();
         if (edit) {
           const patch = {};
@@ -279,8 +283,9 @@ export function createComposer(ctx) {
           if ((color || null) !== (post.color || null)) patch.color = color || null;
           if (secSel && secId !== (post.sectionId ?? null)) patch.sectionId = secId;
           if (att !== undefined) patch.attachment = att;
-          if (Object.keys(patch).length) await ctl.updatePost(post.id, patch);
-          toast('카드를 저장했어요', 'success');
+          let saved = null;
+          if (Object.keys(patch).length) saved = await ctl.updatePost(post.id, patch); // api.js ends every request within 20s (ApiError 'timeout')
+          outcome = { ok: true, requeued: !!saved && saved.status === 'pending' && post.status !== 'pending' };
         } else {
           const data = { title: t, body: b };
           if (color) data.color = color;
@@ -290,45 +295,79 @@ export function createComposer(ctx) {
             data.x = position.x;
             data.y = position.y;
           }
-          const created = await ctl.createPost(data);
+          outcome = { ok: true, created: await ctl.createPost(data) };
+        }
+      } catch (e) {
+        outcome = { ok: false, error: e };
+      }
+      if (closed || my !== attempt) return abandoned(outcome); // the user left meanwhile
+      busy = false;
+      if (outcome.ok) {
+        if (edit) toast(outcome.requeued ? '저장했어요. 관리자가 다시 승인하면 모두에게 보여요.' : '카드를 저장했어요', 'success');
+        else {
+          const created = outcome.created;
           drafts.delete(draftKey);
           if (created && created.id != null) ctx.reveal(created.id);
           toast(created && created.status === 'pending' ? '올렸어요. 관리자가 승인하면 모두에게 보여요.' : '카드를 올렸어요', 'success');
         }
-        close(true);
-      } catch (e) {
-        busy = false;
-        submitBtn.textContent = edit ? '저장' : '게시하기';
-        refresh();
-        if (!(e && e.code === 'cancelled')) {
-          const msg = (e && e.message) || '저장하지 못했어요. 다시 시도해 주세요.';
-          err.textContent = msg;
-          toast(msg, 'error');
-        }
+        close();
+        return;
+      }
+      // never leave the form stuck: restore the button and say what happened right under it
+      submitBtn.textContent = edit ? '저장' : '게시하기';
+      refresh();
+      const e = outcome.error;
+      if (!(e && e.code === 'cancelled')) {
+        const msg = errorMessage(e, '저장하지 못했어요. 다시 시도해 주세요.');
+        err.textContent = msg;
+        toast(msg, 'error');
+      }
+    }
+
+    /** The answer of a request whose composer was closed while it was in flight. */
+    function abandoned(outcome) {
+      const e = outcome.error;
+      if (outcome.ok) {
+        if (!edit && pendingDraft && drafts.get(draftKey) === pendingDraft) drafts.delete(draftKey); // it was posted after all
+        const created = outcome.created;
+        toast(edit ? (outcome.requeued ? '저장했어요. 관리자가 다시 승인하면 모두에게 보여요.' : '카드를 저장했어요') : created && created.status === 'pending' ? '올렸어요. 관리자가 승인하면 모두에게 보여요.' : '카드를 올렸어요', 'success');
+      } else if (!(e && e.code === 'cancelled')) {
+        toast(errorMessage(e, '저장하지 못했어요.') + (edit ? '' : ' 쓰던 내용은 임시 저장해 두었어요.'), 'error');
       }
     }
 
     /* close */
+    /** Leave while a request is still running: keep the text as a draft (create) and drop the request. */
+    function abandon() {
+      if (!edit) {
+        pendingDraft = { title: title.value, body: body.value, color, sectionId: secId, attachment: field.snapshot() };
+        drafts.set(draftKey, pendingDraft);
+      }
+      close();
+    }
     async function requestClose() {
-      if (closed || busy) return;
-      if (!isDirty()) return close(true);
+      if (closed) return;
+      if (busy) return abandon(); // 올리는 중… must never trap the user
+      if (!isDirty()) return close();
       if (edit) {
         const ok = await confirmDialog({ title: '수정을 취소할까요?', message: '고친 내용이 저장되지 않아요.', confirmLabel: '수정 취소', cancelLabel: '계속 수정' });
-        if (ok) close(true);
+        if (ok) close();
         return;
       }
       const choice = await askKeep();
+      if (closed) return;
       if (choice === 'save') {
         drafts.set(draftKey, { title: title.value, body: body.value, color, sectionId: secId, attachment: field.snapshot() });
-        close(true);
+        close();
       } else if (choice === 'discard') {
         drafts.delete(draftKey);
-        close(true);
+        close();
       }
     }
     function close() {
       if (closed) return;
       closed = true;
+      attempt++;
       document.removeEventListener('keydown', onDocKey);
       field.destroy();
       backdrop.classList.add('out');
@@ -353,7 +392,7 @@ export function createComposer(ctx) {
         (title || dialog).focus();
       },
       close: () => close(),
-      destroy: () => close(),
+      destroy: () => (busy && !closed ? abandon() : close()), // leaving the board mid-request keeps the text as a draft
     };
   }
 

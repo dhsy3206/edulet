@@ -76,6 +76,8 @@ docker run -p 3000:3000 -v edulet-data:/data edulet
 | `TRUST_PROXY` | `0` | 리버스 프록시 뒤에서 `1` — `X-Forwarded-*` 를 믿고 접속자 IP·HTTPS 를 판별 |
 | `COOKIE_SECURE` | `auto` | HTTPS 로 운영하면 `1` |
 
+남용 방지 한도도 환경변수로 조절합니다(기본값과 뜻은 `docs/CONTRACT.md` §1): `GUEST_RATE`(IP당 게스트 참여/분, 기본 300 — 교실 하나가 공용 IP 를 써도 충분), `WRITE_RATE`(사용자당 쓰기/분), `UPLOAD_RATE` · `UPLOAD_QUOTA_MB` · `UPLOAD_CONCURRENCY` · `UPLOAD_PER_USER`, `SSE_PER_USER` · `SSE_PER_IP` · `MAX_CONNECTIONS`, `BOARD_MAX_POSTS`, `LOGIN_FAIL_MAX`, `MEMBER_RATE`.
+
 > 공개 서버로 운영한다면: HTTPS + `TRUST_PROXY=1` + `COOKIE_SECURE=1`, 프록시에서 SSE 경로(`/api/boards/*/events`)의 응답 버퍼링을 끄세요(nginx: `proxy_buffering off;`). 누구나 쓸 수 있는 연습장이 필요 없으면 `SEED=0` 을 권합니다.
 
 ## 구조

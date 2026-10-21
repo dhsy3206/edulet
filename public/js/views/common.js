@@ -3,6 +3,8 @@ import { h } from '../lib/h.js';
 import { router } from '../lib/router.js';
 import { toast, icon } from '../lib/ui.js';
 import { WALLPAPERS, DARK_WALLPAPERS } from '../lib/constants.js';
+import { cachedTone } from '../board/tone.js';
+import { errorMessage } from '../board/util.js';
 
 export const FORMAT_ICON = {
   wall: 'wall', grid: 'grid', stream: 'list', shelf: 'columns', rows: 'rows', canvas: 'canvas', backchannel: 'chat',
@@ -13,7 +15,7 @@ export const TEMPLATE_FORMAT = { blank: 'wall', kwl: 'shelf', retro: 'shelf', tr
 /** Toast an error unless it is a deliberate cancel. */
 export function reportError(e, fallback = '처리하지 못했어요. 다시 시도해 주세요.') {
   if (e && e.code === 'cancelled') return;
-  toast((e && e.message) || fallback, 'error');
+  toast(errorMessage(e, fallback), 'error'); // server codes (busy, quota_exceeded, rate_limited …) carry Korean text; 429 gets its wait
 }
 
 /** Run an async function; ApiErrors become toasts. Resolves to the result, or undefined on failure. */
@@ -41,10 +43,14 @@ export const isMember = (u) => !!u && !u.isGuest;
 export const boardPath = (slug) => '/b/' + encodeURIComponent(slug);
 export const boardUrl = (slug) => location.origin + boardPath(slug);
 
-/** Wallpaper → { cls, style, dark, id }. Custom uploads ("/uploads/…") become a background-image. */
+/**
+ * Wallpaper → { cls, style, dark, id }. Custom uploads ("/uploads/…") become a background-image; their chrome tone
+ * comes from the image's measured luminance once board/tone.js has looked at it (`toneKnown`), dark until then.
+ */
 export function wallpaperProps(wp) {
   if (typeof wp === 'string' && wp.startsWith('/uploads/')) {
-    return { id: 'custom', cls: 'wp-custom', dark: true, style: { backgroundImage: `url(${JSON.stringify(wp)})` } };
+    const tone = cachedTone(wp);
+    return { id: 'custom', cls: 'wp-custom', dark: tone !== 'light', toneKnown: !!tone, url: wp, style: { backgroundImage: `url(${JSON.stringify(wp)})` } };
   }
   const id = WALLPAPERS.includes(wp) ? wp : 'green';
   return { id, cls: 'wp-' + id, dark: DARK_WALLPAPERS.includes(id), style: null };

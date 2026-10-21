@@ -5,7 +5,7 @@
 .b-root, .b-layer {
   --b-card-bg: #ffffff;
   --b-card-text: #1f2937;
-  --b-card-text-2: #5b6472;
+  --b-card-text-2: #4b5565; /* ≥ 5:1 on white and on every pastel card colour (timestamps, site names) */
   --b-card-line: rgb(15 23 42 / 0.12);
   --b-card-tint: rgb(15 23 42 / 0.07);
   --b-card-shadow: 0 1px 2px rgb(15 23 42 / 0.16), 0 3px 10px rgb(15 23 42 / 0.1);
@@ -38,7 +38,7 @@
 .b-root.scheme-dark, .b-layer.scheme-dark {
   --b-card-bg: #1f2530;
   --b-card-text: #eef1f6;
-  --b-card-text-2: #aab3c2;
+  --b-card-text-2: #cdd4df; /* ≥ 5:1 on the darkest and the tinted dark cards */
   --b-card-line: rgb(255 255 255 / 0.16);
   --b-card-tint: rgb(255 255 255 / 0.09);
   --b-card-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 3px 12px rgb(0 0 0 / 0.35);
@@ -179,7 +179,7 @@ button.b-react:hover, button.b-chip-react:hover, .b-comment-btn:hover { backgrou
 }
 .b-section.is-editable .b-sec-head { cursor: grab; }
 .b-sec-title { margin: 0; font-size: 17px; font-weight: 800; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: min(60vw, 520px); }
-.b-sec-count { flex: none; min-width: 22px; padding: 1px 8px; border-radius: 999px; background: rgb(255 255 255 / 0.2); font-size: 12px; font-weight: 700; text-align: center; }
+.b-sec-count { flex: none; min-width: 22px; padding: 1px 8px; border-radius: 999px; background: rgb(0 0 0 / 0.3); font-size: 12px; font-weight: 700; text-align: center; }
 .b-sec-menu { color: #fff; }
 .b-sec-menu:hover { background: rgb(255 255 255 / 0.2); }
 .b-sec-rename { width: min(260px, 60vw); padding: 3px 8px; border-radius: 6px; border: 1.5px solid rgb(255 255 255 / 0.7); background: rgb(255 255 255 / 0.16); color: #fff; font: inherit; font-weight: 800; }
@@ -193,10 +193,11 @@ button.b-react:hover, button.b-chip-react:hover, .b-comment-btn:hover { backgrou
 .b-sec-empty { margin: auto 0; padding: 22px 8px; text-align: center; font-size: 13px; color: var(--b-surface-text-2); }
 .b-add-card {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; flex: none; min-height: 72px; padding: 12px;
-  border: 2px dashed rgb(255 255 255 / 0.55); border-radius: 12px; background: rgb(255 255 255 / 0.1); color: var(--b-surface-text); font-weight: 700; font-size: 13px;
+  border: 2px dashed rgb(255 255 255 / 0.55); border-radius: 12px; background: rgb(0 0 0 / 0.4); color: var(--b-surface-text); font-weight: 700; font-size: 13px;
 }
 .b-root[data-tone='light'] .b-add-card { border-color: rgb(15 23 42 / 0.3); background: rgb(255 255 255 / 0.4); }
-.b-add-card:hover { background: rgb(255 255 255 / 0.22); }
+.b-add-card:hover { background: rgb(0 0 0 / 0.3); }
+.b-root[data-tone='light'] .b-add-card:hover { background: rgb(255 255 255 / 0.6); }
 .b-rows .b-add-card { flex-basis: 140px; width: 140px; align-self: stretch; min-height: 120px; }
 .b-shelf .b-add-card { width: 100%; flex-direction: row; gap: 8px; }
 .b-sec-add { flex: none; }
@@ -204,11 +205,12 @@ button.b-react:hover, button.b-chip-react:hover, .b-comment-btn:hover { backgrou
 .b-shelf .b-sec-add { flex: 0 0 min(300px, 86vw); }
 .b-sec-add-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 48px; padding: 0 20px;
-  border: 2px dashed rgb(255 255 255 / 0.6); border-radius: 12px; background: rgb(255 255 255 / 0.1); color: var(--b-surface-text); font-weight: 800; font-size: 15px;
+  border: 2px dashed rgb(255 255 255 / 0.6); border-radius: 12px; background: rgb(0 0 0 / 0.4); color: var(--b-surface-text); font-weight: 800; font-size: 15px;
 }
 .b-rows .b-sec-add-btn { width: auto; }
 .b-root[data-tone='light'] .b-sec-add-btn { border-color: rgb(15 23 42 / 0.3); background: rgb(255 255 255 / 0.4); }
-.b-sec-add-btn:hover { background: rgb(255 255 255 / 0.24); }
+.b-sec-add-btn:hover { background: rgb(0 0 0 / 0.3); }
+.b-root[data-tone='light'] .b-sec-add-btn:hover { background: rgb(255 255 255 / 0.6); }
 .b-sec-add-form { display: flex; align-items: center; gap: 6px; background: var(--surface); border-radius: 12px; padding: 8px; box-shadow: var(--shadow-2); max-width: 420px; }
 .b-sec-add-input { min-height: 38px; }
 
@@ -241,8 +243,14 @@ button.b-react:hover, button.b-chip-react:hover, .b-comment-btn:hover { backgrou
 .b-msg-main { display: flex; flex-direction: column; gap: 3px; max-width: min(540px, 84%); min-width: 0; }
 .b-msg.mine .b-msg-main { align-items: flex-end; }
 .b-msg-top { min-height: 20px; font-size: 12px; color: var(--b-surface-text-2); gap: 6px; }
+/* name / time / reactions sit straight on the wallpaper: a soft pill behind them keeps them readable on any gradient (UX-15) */
+.b-root { --b-meta-bg: rgb(0 0 0 / 0.46); }
+.b-root[data-tone='light'] { --b-meta-bg: rgb(255 255 255 / 0.66); }
+.b-msg-meta { display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border-radius: 999px; background: var(--b-meta-bg); min-height: 20px; }
+.b-msg-foot { align-self: flex-start; padding: 0 4px; border-radius: 999px; background: var(--b-meta-bg); }
+.b-msg.mine .b-msg-foot { align-self: flex-end; }
 .b-msg .b-author { color: var(--b-surface-text); font-size: 13px; }
-.b-msg .b-time { color: var(--b-surface-text-2); }
+.b-msg .b-time { color: var(--b-surface-text); }
 .b-msg-menu { color: var(--b-surface-text-2); margin: -4px 0; width: 28px; height: 28px; opacity: 0; transition: opacity 0.12s; }
 .b-msg:hover .b-msg-menu, .b-msg-menu:focus-visible, .b-msg:focus-within .b-msg-menu { opacity: 1; }
 @media (hover: none) { .b-msg-menu { opacity: 1; } }

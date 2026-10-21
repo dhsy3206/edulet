@@ -7,6 +7,7 @@ import { BoardController } from '../lib/board-controller.js';
 import { renderRich } from '../lib/markdown.js';
 import { icon, avatar, timeAgo, fullTime } from '../lib/ui.js';
 import { mountBoard } from '../board/index.js';
+import { loadTone } from '../board/tone.js';
 import { boardPath, wallpaperProps } from './common.js';
 import { openAuthModal } from './auth.js';
 import { createTopbar, simpleBar } from './board-topbar.js';
@@ -36,7 +37,9 @@ export function boardPage(root, params) {
   let bar = null; // full top bar (ready)
   let msgBar = null; // simple top bar (other states)
   let handle = null; // F2 mountBoard() result
+  let headWatch = null; // ResizeObserver: the header scrim follows the header's height
   let hasConnected = false;
+  let alive = true;
   let sharePanel = null;
   let settingsHandle = null;
   const el = {}; // ready-view elements
@@ -44,8 +47,16 @@ export function boardPage(root, params) {
   /* ───────── surface ───────── */
   function setSurface(board) {
     const wp = wallpaperProps(board ? board.wallpaper : 'green');
+    if (wp.id === 'custom' && !wp.toneKnown) {
+      // light or dark photo? (UX-06) measure once, then repaint; until then: white text on a dark scrim
+      const asked = board.wallpaper;
+      loadTone(wp.url).then(() => {
+        if (alive && ctl.state.board && ctl.state.board.wallpaper === asked) setSurface(ctl.state.board);
+      });
+    }
     surface.className = ['bp', wp.cls, 'font-' + (board ? board.font : 'sans'), 'scheme-' + (board ? board.colorScheme : 'light'), wp.dark && 'bp-dark'].filter(Boolean).join(' ');
     surface.style.backgroundImage = wp.style ? wp.style.backgroundImage : '';
+    surface.dataset.tone = wp.dark ? 'dark' : 'light';
     surface.dataset.format = board ? board.format : '';
     surface.dataset.wallpaper = board ? board.wallpaper : '';
   }
@@ -70,6 +81,9 @@ export function boardPage(root, params) {
       }
     }
     handle = null;
+    if (headWatch) headWatch.disconnect();
+    headWatch = null;
+    surface.style.removeProperty('--bp-scrim-h');
     built = false;
   }
 
@@ -88,11 +102,25 @@ export function boardPage(root, params) {
     el.title = h('h1', { class: 'bp-title', dataset: { role: 'board-title' } });
     el.byline = h('div', { class: 'bp-byline' });
     el.desc = h('div', { class: 'bp-desc' });
-    el.body = h('div', { class: 'bp-body' });
+    // <main> landmark + a skip link that jumps past the top bar (UX-16)
+    el.body = h('main', { class: 'bp-body', id: 'main', tabindex: '-1', 'aria-label': '보드' });
+    el.skip = h('a', {
+      class: 'bp-skip', href: '#main',
+      onClick: (e) => {
+        e.preventDefault();
+        el.body.focus({ preventScroll: true });
+        el.body.scrollIntoView({ block: 'start' });
+      },
+    }, '보드로 건너뛰기');
     el.bannerText = h('span', { class: 'bp-banner-text' });
     el.retry = h('button', { type: 'button', class: 'btn btn-sm btn-secondary', hidden: true, onClick: () => ctl.load() }, '다시 시도');
     el.banner = h('div', { class: 'bp-banner', role: 'status', hidden: true }, h('span', { class: 'spinner sm' }), el.bannerText, el.retry);
-    mount(surface, bar.el, el.banner, h('section', { class: 'bp-head' }, el.byline, el.title, el.desc), el.body);
+    el.head = h('section', { class: 'bp-head' }, el.byline, el.title, el.desc);
+    mount(surface, el.skip, bar.el, el.banner, el.head, el.body);
+    if (typeof ResizeObserver !== 'undefined') {
+      headWatch = new ResizeObserver(() => surface.style.setProperty('--bp-scrim-h', el.head.offsetTop + el.head.offsetHeight + 70 + 'px'));
+      headWatch.observe(el.head);
+    }
     view = 'ready';
     built = true;
     try {
@@ -122,10 +150,13 @@ export function boardPage(root, params) {
     const s = ctl.state;
     if (s.connected) hasConnected = true;
     const failed = s.status === 'error';
+    // a stream that was refused outright (e.g. 429 too_many_connections) never connected: say so instead of failing silently
+    const refused = s.status === 'ready' && !s.connected && !hasConnected && !!s.streamRefused;
     const lost = hasConnected && !s.connected;
-    el.banner.hidden = !(failed || lost);
+    el.banner.hidden = !(failed || lost || refused);
     el.retry.hidden = !failed;
-    el.bannerText.textContent = failed ? '보드를 새로 고치지 못했어요.' : '연결이 끊겼어요. 다시 연결하는 중…';
+    el.bannerText.textContent = failed ? '보드를 새로 고치지 못했어요.'
+      : refused ? '실시간 연결을 만들지 못했어요. 다른 창을 닫으면 다시 연결돼요.' : '연결이 끊겼어요. 다시 연결하는 중…';
   }
 
   /* ───────── other states ───────── */
@@ -230,6 +261,7 @@ export function boardPage(root, params) {
       ctl.syncFromUrl(next.postId);
     },
     destroy() {
+      alive = false;
       unsub();
       teardownReady();
       clearChrome();

@@ -13,7 +13,7 @@ function isTyping(t) {
 /** Bar for states without a board (loading / not found / error): logo + user control only. */
 export function simpleBar() {
   const uc = userControl();
-  const el = h('header', { class: 'bp-topbar' }, h('div', { class: 'bp-topbar-in' }, logoLink('bp-logo'), h('span', { class: 'spacer' }), uc.el));
+  const el = h('header', { class: 'bp-topbar' }, h('nav', { class: 'bp-topbar-in', 'aria-label': '상단 메뉴' }, logoLink('bp-logo'), h('span', { class: 'spacer' }), uc.el));
   return { el, destroy: () => uc.destroy() };
 }
 
@@ -71,18 +71,20 @@ export function createTopbar(ctl, { onShare, onSettings }) {
 
   const bar = h('header', { class: 'bp-topbar' },
     // presence sits left of the buttons so avatars joining/leaving never move what you are about to click
-    h('div', { class: 'bp-topbar-in' }, logoLink('bp-logo'), h('span', { class: 'spacer' }),
+    h('nav', { class: 'bp-topbar-in', 'aria-label': '보드 메뉴' }, logoLink('bp-logo'), h('span', { class: 'spacer' }),
       presence, search, slideshowBtn, shareBtn, uc.el));
 
   function updatePresence() {
     const list = ctl.state.presence || [];
+    const more = ctl.state.presenceMore || 0; // the server lists at most 50 people and says how many more there are
     const shown = list.slice(0, MAX_AVATARS);
     const rest = list.slice(MAX_AVATARS);
-    presence.hidden = list.length === 0;
-    presence.setAttribute('aria-label', `접속 중 ${list.length}명: ${list.map((u) => u.displayName).join(', ')}`);
+    const restCount = rest.length + more;
+    presence.hidden = list.length + more === 0;
+    presence.setAttribute('aria-label', `접속 중 ${list.length + more}명: ${list.map((u) => u.displayName).join(', ')}${more ? ` 외 ${more}명` : ''}`);
     mount(presence,
       ...shown.map((u) => h('span', { class: 'bp-presence-item', title: u.displayName }, avatar(u, 28))),
-      rest.length ? h('span', { class: 'bp-presence-more', title: rest.map((u) => u.displayName).join(', ') }, '+' + rest.length) : null
+      restCount ? h('span', { class: 'bp-presence-more', title: rest.map((u) => u.displayName).join(', ') }, '+' + restCount) : null
     );
   }
   function update() {
@@ -101,11 +103,24 @@ export function createTopbar(ctl, { onShare, onSettings }) {
   }
   document.addEventListener('keydown', onKey);
 
+  // once the page scrolls, cards slide under the bar: give it a solid-enough backdrop so its labels stay readable
+  let stuck = false;
+  const onScroll = () => {
+    const s = window.scrollY > 2;
+    if (s !== stuck) {
+      stuck = s;
+      bar.classList.toggle('stuck', s);
+    }
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
   update();
   return {
     el: bar, update, updatePresence,
     destroy() {
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll);
       push.cancel();
       uc.destroy();
     },

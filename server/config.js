@@ -43,7 +43,7 @@ export function loadConfig(o = {}) {
     uploadRateMax: num('UPLOAD_RATE', 30), // upload requests per user per 10 minutes
     uploadQuotaMb: num('UPLOAD_QUOTA_MB', 300), // bytes a user may upload per 24 hours
     sseMaxPerUser: num('SSE_PER_USER', 10), // open event streams per signed-in user
-    sseMaxPerIp: num('SSE_PER_IP', 60), // open event streams per client address
+    sseMaxPerIp: num('SSE_PER_IP', 300), // open event streams per client address
     maxConnections: num('MAX_CONNECTIONS', 2000), // http server socket cap
     writeRateMax: num('WRITE_RATE', 240), // posts/comments/reactions/sections writes per user per minute
     boardMaxPosts: num('BOARD_MAX_POSTS', 5000), // posts per board

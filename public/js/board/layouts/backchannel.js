@@ -3,7 +3,7 @@
 import { h } from '../../lib/h.js';
 import { icon, popover, promptDialog } from '../../lib/ui.js';
 import { LIMITS } from '../../lib/constants.js';
-import { reconcile, scrollerOf, isIme, autosize } from '../util.js';
+import { reconcile, scrollerOf, isIme, autosize, isBlank, cleanText } from '../util.js';
 import { createEmpty } from '../empty.js';
 import { createAttachField } from '../attach-field.js';
 
@@ -31,7 +31,7 @@ export function createBackchannel(ctx) {
   let scrollTarget = null;
 
   function refreshSend() {
-    sendBtn.disabled = sending || field.busy() || (!ta.value.trim() && !field.hasAttachment());
+    sendBtn.disabled = sending || field.busy() || (isBlank(ta.value) && !field.hasAttachment());
   }
 
   function openAttachMenu() {
@@ -47,14 +47,14 @@ export function createBackchannel(ctx) {
 
   async function send() {
     if (sending || field.busy()) return;
-    const text = ta.value.trim();
+    const text = cleanText(ta.value);
     const att = field.value();
     if (!text && !att) return;
     sending = true;
     refreshSend();
     const data = { body: text };
     if (att) data.attachment = att;
-    const r = await ctx.run(() => ctl.createPost(data));
+    const r = await ctx.run(() => ctl.createPost(data)); // api.js times a hung request out, so the send button never stays frozen
     sending = false;
     if (r) {
       ta.value = '';

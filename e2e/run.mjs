@@ -102,6 +102,8 @@ try {
     await A.page.click('[data-role="composer-submit"]');
     await B.page.waitFor(`[...document.querySelectorAll('[data-post-id]')].some(e => e.innerText.includes('실시간 확인 글'))`, { timeout: 6000 });
     check('S2 앨리스의 새 글이 밥 화면에 새로고침 없이 나타남', true);
+    // presence broadcasts are coalesced to ≤ 1 per second, so poll instead of reading once
+    await A.page.waitFor(`document.querySelectorAll('[data-role="presence"] .avatar').length >= 2`, { timeout: 5000 }).catch(() => {});
     check('S2 접속자 표시(2명 이상)', (await A.page.count('[data-role="presence"] .avatar')) >= 2, 'n=' + (await A.page.count('[data-role="presence"] .avatar')));
     const id = await B.page.eval(`[...document.querySelectorAll('[data-post-id]')].find(e => e.innerText.includes('실시간 확인 글')).dataset.postId`);
     await B.page.click(`[data-post-id="${id}"] [data-reaction="like"]`);

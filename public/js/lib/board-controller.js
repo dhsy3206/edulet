@@ -238,6 +238,8 @@ export class BoardController {
     this._es = es;
     es.onopen = () => {
       this._lastEventAt = Date.now();
+      this._everOpened = true;
+      this.state.streamRefused = false;
       this.state.connected = true;
       this._retry = 0;
       this._resolveFirst();
@@ -251,6 +253,7 @@ export class BoardController {
       this.state.connected = false;
       this._needResync = true;
       this._resolveFirst();
+      if (es.readyState === 2 /* CLOSED */ && !this._everOpened) this.state.streamRefused = true; // refused outright (cap, 404…)
       this._emit('ui');
       if (es.readyState === 2 /* CLOSED */) {
         this._es = null;
@@ -285,6 +288,7 @@ export class BoardController {
       case 'hello':
       case 'presence':
         s.presence = d.presence || [];
+        s.presenceMore = d.more || 0; // the server lists at most 50 people and counts the rest
         return this._emit('presence');
       case 'board.updated': {
         const prev = s.board;

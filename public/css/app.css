@@ -109,7 +109,8 @@
 .dash-thumb { display: block; aspect-ratio: 16 / 10; padding: 14px 16px; text-decoration: none; color: #0f172a; overflow: hidden; }
 .dash-thumb.dark { color: #fff; }
 .dash-thumb-title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-weight: 800; font-size: 18px; line-height: 1.25; padding-right: 34px; overflow-wrap: anywhere; }
-.dash-thumb.wp-custom .dash-thumb-title { text-shadow: 0 1px 3px rgb(0 0 0 / 0.55); }
+.dash-thumb.dark .dash-thumb-title, .dash-thumb.wp-custom .dash-thumb-title { text-shadow: 0 1px 3px rgb(0 0 0 / 0.55); }
+.dash-thumb.wp-custom:not(.dark) .dash-thumb-title { text-shadow: 0 1px 3px rgb(255 255 255 / 0.7); }
 .dash-more { position: absolute; top: 8px; right: 8px; background: rgb(255 255 255 / 0.88); color: #0f172a; }
 .dash-more:hover { background: #fff; }
 .dash-meta { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
@@ -130,13 +131,27 @@
 /* ───────── board page shell ───────── */
 .bp {
   --bp-fg: #0f172a; --bp-chip: rgb(255 255 255 / 0.7); --bp-chip-hover: rgb(255 255 255 / 0.95);
-  --bp-bar: rgb(255 255 255 / 0.55); --bp-bar-line: rgb(15 23 42 / 0.08); --hover: var(--bp-chip-hover);
-  position: relative; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; color: var(--bp-fg); font-family: var(--board-font);
+  --bp-bar: rgb(255 255 255 / 0.55); --bp-bar-stuck: rgb(255 255 255 / 0.9); --bp-bar-line: rgb(15 23 42 / 0.08); --hover: var(--bp-chip-hover);
+  --bp-scrim: none; --bp-scrim-h: 320px;
+  position: relative; isolation: isolate; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; color: var(--bp-fg); font-family: var(--board-font);
 }
-.bp.bp-dark { --bp-fg: #fff; --bp-chip: rgb(255 255 255 / 0.18); --bp-chip-hover: rgb(255 255 255 / 0.3); --bp-bar: rgb(0 0 0 / 0.2); --bp-bar-line: rgb(255 255 255 / 0.12); }
+.bp.bp-dark { --bp-fg: #fff; --bp-chip: rgb(255 255 255 / 0.18); --bp-chip-hover: rgb(255 255 255 / 0.3); --bp-bar: rgb(0 0 0 / 0.2); --bp-bar-stuck: rgb(15 23 42 / 0.82); --bp-bar-line: rgb(255 255 255 / 0.12); }
 @media (min-width: 800px) { .bp.wp-custom { background-attachment: fixed; } }
 
-.bp-topbar { position: sticky; top: 0; z-index: 30; background: var(--bp-bar); -webkit-backdrop-filter: blur(12px) saturate(1.2); backdrop-filter: blur(12px) saturate(1.2); border-bottom: 1px solid var(--bp-bar-line); font-family: var(--font-sans); }
+/* Header legibility (UX-05/06): a soft scrim behind the top bar + board header keeps white text at WCAG contrast on any
+   wallpaper while the gradient below the header stays untouched. Dark chrome → dark scrim; light chrome on a custom
+   photo → light scrim; light presets need none. board-page.js sets --bp-scrim-h to the header's height. */
+.bp::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: var(--bp-scrim-h); z-index: -1; pointer-events: none; background: var(--bp-scrim); }
+.bp.bp-dark { --bp-scrim: linear-gradient(rgb(0 0 0 / 0.4), rgb(0 0 0 / 0.31) calc(var(--bp-scrim-h) - 80px), rgb(0 0 0 / 0)); }
+.bp.wp-custom.bp-dark { --bp-scrim: linear-gradient(rgb(0 0 0 / 0.64), rgb(0 0 0 / 0.57) calc(var(--bp-scrim-h) - 80px), rgb(0 0 0 / 0)); }
+.bp.wp-custom:not(.bp-dark) { --bp-scrim: linear-gradient(rgb(255 255 255 / 0.66), rgb(255 255 255 / 0.58) calc(var(--bp-scrim-h) - 80px), rgb(255 255 255 / 0)); --bp-bar: rgb(255 255 255 / 0.6); }
+
+/* skip link: invisible until focused */
+.bp-skip { position: absolute; left: 12px; top: -64px; z-index: 100; padding: 10px 16px; border-radius: 10px; background: #fff; color: #0f172a; font: 700 14px var(--font-sans); text-decoration: none; box-shadow: var(--shadow-2); }
+.bp-skip:focus, .bp-skip:focus-visible { top: 8px; }
+
+.bp-topbar { position: sticky; top: 0; z-index: 30; background: var(--bp-bar); -webkit-backdrop-filter: blur(12px) saturate(1.2); backdrop-filter: blur(12px) saturate(1.2); border-bottom: 1px solid var(--bp-bar-line); font-family: var(--font-sans); transition: background-color 0.15s; }
+.bp-topbar.stuck { background: var(--bp-bar-stuck); }
 .bp-topbar-in { display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 16px; }
 .bp-logo { color: var(--bp-fg); font-size: 18px; margin-right: 4px; }
 .bp-logo .app-logo-mark { width: 24px; height: 24px; }
@@ -172,12 +187,13 @@
 .bp-banner { position: sticky; top: 52px; z-index: 29; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 6px 12px; background: #fff4d6; color: #7a4b00; font: 600 13px var(--font-sans); border-bottom: 1px solid #f1d58a; }
 
 .bp-head { width: 100%; max-width: 1200px; padding: 28px 24px 12px; }
-.bp-byline { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font: 600 13px var(--font-sans); opacity: 0.92; }
+.bp-byline { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font: 600 13px var(--font-sans); }
 .bp-title { font-size: clamp(28px, 4.4vw, 46px); font-weight: 800; line-height: 1.14; letter-spacing: -0.02em; overflow-wrap: anywhere; }
-.bp-desc { margin-top: 10px; max-width: 720px; font-size: 16px; line-height: 1.55; opacity: 0.94; }
+.bp-desc { margin-top: 10px; max-width: 720px; font-size: 16px; line-height: 1.55; }
 .bp-desc .rich-link { color: inherit; }
 .bp.wp-custom .bp-head { text-shadow: 0 1px 4px rgb(0 0 0 / 0.5); }
 .bp-body { flex: 1; min-width: 0; position: relative; }
+.bp-body:focus { outline: none; }
 .bp-inline-error { padding: 24px; font-weight: 700; }
 
 /* skeleton + message states */
@@ -283,4 +299,13 @@
 }
 @media (max-width: 480px) {
   .dash-create .app-picker, .app-picker-tpl { grid-template-columns: 1fr; }
+}
+/* narrow phones (UX-12): the top bar must fit 320px — drop the presence strip first, then the wordmark */
+@media (max-width: 420px) {
+  .bp-presence { display: none; }
+  .bp-topbar-in { gap: 4px; padding: 0 8px; }
+  .bp-logo { margin-right: 0; }
+}
+@media (max-width: 300px) {
+  .bp-logo-text { display: none; }
 }

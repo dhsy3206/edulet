@@ -9,7 +9,7 @@ import { createReactions } from './reactions.js';
 import { createComments } from './comments.js';
 import { openPostMenu } from './actions.js';
 import { authorBits } from './card.js';
-import { postSig } from './util.js';
+import { postSig, withoutSearch } from './util.js';
 
 const EDITABLE = 'input,textarea,select,[contenteditable="true"]';
 
@@ -24,6 +24,20 @@ export function createDetail(ctx) {
   let reactions = null;
   let comments = null;
   let cur = null;
+  let snapCheck = false; // a snapshot arrived: re-check the open post's comment list against the server's count
+  let snapForce = false; // …and it was a reconnect resync: reload the list for sure
+
+  /**
+   * Cards in pager order. While the open card matches the active search that is the filtered list; once it does
+   * not (search changed under the open detail) fall back to the unfiltered order so "n / N" and the arrows still work.
+   */
+  function navList() {
+    const nav = ctl.navPosts();
+    const i = nav.findIndex((p) => p.id === openId);
+    if (i >= 0 || !ctl.state.search) return { nav, i };
+    const all = withoutSearch(ctl, () => ctl.navPosts());
+    return { nav: all, i: all.findIndex((p) => p.id === openId), unfiltered: true };
+  }
 
   function build() {
     comments = createComments(ctx, { onAdded: () => requestAnimationFrame(() => { els.scroll.scrollTop = els.scroll.scrollHeight; }) });
@@ -57,8 +71,7 @@ export function createDetail(ctx) {
   }
 
   function go(delta) {
-    const nav = ctl.navPosts();
-    const i = nav.findIndex((p) => p.id === openId);
+    const { nav, i } = navList();
     const t = nav[i + delta];
     if (i >= 0 && t) ctl.openPost(t.id);
   }
@@ -104,6 +117,7 @@ export function createDetail(ctx) {
     reactions = null;
     comments = null;
     cur = null;
+    snapCheck = snapForce = false;
     if (prevFocus && prevFocus.focus && document.contains(prevFocus)) prevFocus.focus();
     prevFocus = null;
   }
@@ -143,8 +157,7 @@ export function createDetail(ctx) {
   }
 
   function updatePager() {
-    const nav = ctl.navPosts();
-    const i = nav.findIndex((p) => p.id === openId);
+    const { nav, i } = navList();
     els.pager.textContent = i >= 0 ? `${i + 1} / ${nav.length}` : `${nav.length}개`;
     els.prev.disabled = i <= 0;
     els.next.disabled = i < 0 || i >= nav.length - 1;
@@ -166,11 +179,13 @@ export function createDetail(ctx) {
     }
     cur = post;
     if (!root) open(post);
+    let fresh = false;
     if (openId !== id) {
       openId = id;
       sigs = {};
       comments.load(id);
       els.scroll.scrollTop = 0;
+      fresh = true;
     }
     const a = post.attachment;
     const mSig = `${id}|${a ? [a.kind, a.url, a.preview && a.preview.embedUrl, a.preview && a.preview.image, a.preview && a.preview.title].join('|') : `${post.title}|${post.body}|${post.color}`}`;
@@ -186,12 +201,25 @@ export function createDetail(ctx) {
     reactions.update(post);
     comments.refreshAccess();
     updatePager();
+    if (snapCheck) {
+      // after a snapshot (esp. a reconnect) the list may have missed comments: compare with the card's count
+      const force = snapForce;
+      snapCheck = snapForce = false;
+      const shown = comments.count();
+      if (!fresh && (force || (shown !== null && shown !== post.commentCount))) comments.refresh();
+    }
   }
 
   return {
     sync,
     onComments(ev) {
       if (comments) comments.onEvent(ev);
+    },
+    /** A (re)fetched snapshot was applied; `resync` = it followed a reconnect. */
+    onSnapshot(ev) {
+      if (!root) return;
+      snapCheck = true;
+      if (ev && ev.resync) snapForce = true;
     },
     isOpen: () => !!root,
     destroy: close,

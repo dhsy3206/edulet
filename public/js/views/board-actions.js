@@ -50,3 +50,19 @@ export async function deleteBoardFlow(board) {
   toast('보드를 삭제했어요.', 'success');
   return true;
 }
+
+/**
+ * A member (not the owner) leaves a board: confirm, then DELETE /boards/:slug/members/:myId.
+ * Resolves true when the user is no longer a member. Server refusals (owner_cannot_leave, rate_limited …) throw ApiError.
+ */
+export async function leaveBoardFlow(board, myUserId) {
+  const ok = await confirmDialog({
+    title: '보드에서 나갈까요?',
+    message: `“${board.title}” 보드의 구성원에서 빠져요. 이 보드가 비공개라면 다시 초대받기 전에는 열 수 없어요.`,
+    confirmLabel: '나가기', danger: true,
+  });
+  if (!ok) return false;
+  await api.del(`/boards/${encodeURIComponent(board.slug)}/members/${encodeURIComponent(myUserId)}`);
+  toast('보드에서 나갔어요.', 'success');
+  return true;
+}

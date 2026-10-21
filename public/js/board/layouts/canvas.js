@@ -1,13 +1,66 @@
-// canvas: absolutely positioned cards on a large scrollable surface. Writers drag their own cards (moderators any),
-// resize the width with the right-edge handle, and unplaced cards are auto-cascaded (persisted only if allowed).
+// canvas: absolutely positioned cards on a large scrollable surface. Writers drag their own cards (moderators any)
+// and resize the width with the right-edge handle. Cards the server has no x/y for (a board switched to canvas) sit
+// in a FIXED 4-column grid in board order — a pure function of the card data, never of this window or a measurement,
+// so every client shows the identical arrangement. That arrangement is never persisted: x/y are saved only when a
+// user actually drags a card.
 import { h } from '../../lib/h.js';
-import { reconcile, clamp, isInteractive } from '../util.js';
+import { reconcile, clamp, isInteractive, withoutSearch, stripInvisible } from '../util.js';
 import { createEmpty } from '../empty.js';
 
 const DEFAULT_W = 256;
 const MIN_W = 200;
 const MAX_W = 640;
 const PAD = 24;
+const GRID_COLS = 4;
+const GRID_STEP = 280; // x distance between grid columns (card 256 + 24 gap)
+const GRID_GAP = 20; // vertical gap between grid rows
+
+/* Card height estimated from data only (the same on every client, unlike a DOM measurement). Slightly generous. */
+const emUnits = (str) => {
+  let u = 0;
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    u += c === 32 ? 0.3 : (c >= 0x1100 && c <= 0x11ff) || (c >= 0x2e80 && c <= 0xd7af) || (c >= 0xf900 && c <= 0xfaff) || (c >= 0xff00 && c <= 0xffef) || c >= 0x1f000 ? 1 : 0.55;
+  }
+  return u;
+};
+const NL = String.fromCharCode(10);
+const wrapLines = (text, perLineEm) => String(text || '').split(NL).reduce((n, para) => n + Math.max(1, Math.ceil(emUnits(para) / perLineEm)), 0);
+const estCache = new Map(); // post id → { sig, h }
+function estimateHeight(p) {
+  const w = clamp(p.w || DEFAULT_W, MIN_W, MAX_W);
+  const a = p.attachment;
+  const pv = (a && a.preview) || {};
+  const sig = [w, p.title, (p.body || '').slice(0, 700), a ? [a.kind, pv.image ? 1 : 0, pv.embedUrl ? 1 : 0].join('') : ''].join('|');
+  const hit = estCache.get(p.id);
+  if (hit && hit.sig === sig) return hit.h;
+  const inner = w - 28;
+  let hh = 12 + 36 + 6 + 40 + 8; // padding, header row, bottom padding, footer row, gap
+  if (p.title) hh += 8 + wrapLines(stripInvisible(p.title), inner / 17.5) * 23.7;
+  if (a) {
+    hh += 8;
+    if (a.kind === 'image') hh += Math.min(440, (w * 3) / 4);
+    else if (a.kind === 'video') hh += (w * 9) / 16;
+    else if (a.kind === 'link') hh += (pv.image ? (w * 9) / 16 : 0) + 78;
+    else hh += (pv.image ? (w * 9) / 16 : 0) + 64;
+  }
+  if (p.body) hh += 8 + Math.min(wrapLines(stripInvisible((p.body || '').slice(0, 700)), inner / 14.5) * 22.5, 142);
+  hh = Math.ceil(hh * 1.04);
+  estCache.set(p.id, { sig, h: hh });
+  return hh;
+}
+
+/** id → {x,y} grid slot for every card in board order (placed cards keep their slot reserved, so dragging one never reflows the rest). */
+function gridSlots(ordered) {
+  const out = new Map();
+  let y = PAD;
+  for (let r = 0; r * GRID_COLS < ordered.length; r++) {
+    const row = ordered.slice(r * GRID_COLS, (r + 1) * GRID_COLS);
+    row.forEach((p, c) => out.set(p.id, { x: PAD + c * GRID_STEP, y }));
+    y += Math.max(...row.map(estimateHeight)) + GRID_GAP;
+  }
+  return out;
+}
 
 export function createCanvas(ctx) {
   const { ctl } = ctx;
@@ -16,13 +69,12 @@ export function createCanvas(ctx) {
   const empty = createEmpty(ctx);
   el.append(surface);
 
-  const auto = new Map(); // id → {x,y}: provisional positions for cards the server has no x/y for
+  let slots = new Map(); // id → {x,y}: deterministic grid slot, used while the server has no x/y for a card
   const z = new Map();
   const dragging = new Set();
   const bound = new Map(); // id → { c, unbind }
   let zTop = 10;
   let posts = [];
-  let raf = 0;
   let surfRaf = 0;
   let destroyed = false;
   let activeDrag = null;
@@ -34,7 +86,7 @@ export function createCanvas(ctx) {
     const it = ctx.cards.get(p.id);
     if (!it || dragging.has(p.id)) return;
     const c = it.el;
-    const pos = p.x != null && p.y != null ? { x: p.x, y: p.y } : auto.get(p.id);
+    const pos = p.x != null && p.y != null ? { x: p.x, y: p.y } : slots.get(p.id);
     c.style.width = (p.w || DEFAULT_W) + 'px';
     c.classList.toggle('can-move', ctl.canMovePost(p));
     if (z.has(p.id)) c.style.zIndex = z.get(p.id);
@@ -47,53 +99,6 @@ export function createCanvas(ctx) {
       c.style.left = '0px';
       c.style.top = '0px';
     }
-  }
-
-  function cascade() {
-    raf = 0;
-    if (destroyed) return;
-    const pending = posts.filter((p) => (p.x == null || p.y == null) && !auto.has(p.id) && ctx.cards.has(p.id));
-    if (!pending.length) return;
-    const viewW = el.clientWidth || 960;
-    const colW = DEFAULT_W + PAD;
-    const n = Math.max(1, Math.floor((viewW - PAD) / colW));
-    const hs = new Array(n).fill(PAD);
-    // start below cards that already have positions in the first columns' range
-    for (const p of posts) {
-      if (p.x == null || p.y == null) continue;
-      const k = Math.floor((p.x - PAD / 2) / colW);
-      const it = ctx.cards.get(p.id);
-      if (k >= 0 && k < n && it) hs[k] = Math.max(hs[k], p.y + (it.el.offsetHeight || 240) + PAD);
-    }
-    const persist = [];
-    for (const p of pending) {
-      const it = ctx.cards.get(p.id);
-      let k = 0;
-      for (let i = 1; i < n; i++) if (hs[i] < hs[k]) k = i;
-      const pos = { x: PAD + k * colW, y: hs[k] };
-      hs[k] += (it.el.offsetHeight || 240) + PAD;
-      auto.set(p.id, pos);
-      applyPos(p);
-      if (ctl.canMovePost(p)) persist.push([p.id, pos]);
-    }
-    scheduleSurface();
-    persistAll(persist);
-  }
-
-  async function persistAll(list) {
-    // best effort, a few at a time; failures just leave the card where it appears locally
-    const queue = [...list];
-    const worker = async () => {
-      while (queue.length && !destroyed) {
-        const [id, pos] = queue.shift();
-        try {
-          await ctl.setPostPosition(id, { x: pos.x, y: pos.y });
-        } catch {
-          /* ignore */
-        }
-      }
-    };
-    await Promise.all([worker(), worker(), worker()]);
   }
 
   function scheduleSurface() {
@@ -195,7 +200,6 @@ export function createCanvas(ctx) {
       if (commit) {
         const x = Math.max(0, Math.round(parseFloat(c.style.left) || 0));
         const y = Math.max(0, Math.round(parseFloat(c.style.top) || 0));
-        auto.delete(id);
         ctx.run(() => ctl.setPostPosition(id, { x, y })).then(() => {
           const cur = ctl.postById(id);
           if (cur) applyPos(cur);
@@ -314,15 +318,16 @@ export function createCanvas(ctx) {
       if (!ctx.cards.has(id) || !posts.some((p) => p.id === id)) {
         b.unbind();
         bound.delete(id);
-        auto.delete(id);
+        estCache.delete(id);
         z.delete(id);
       }
     }
     reconcile(surface, wanted);
     empty.update(!posts.length);
     reconcile(el, [surface, ...(posts.length ? [] : [empty.el])]);
+    // slots follow the unfiltered board order, so typing in the search box never moves a card
+    slots = gridSlots(withoutSearch(ctl, () => ctl.sortedPosts()));
     for (const p of posts) applyPos(p);
-    if (!raf) raf = requestAnimationFrame(cascade);
     scheduleSurface();
   }
 
@@ -340,7 +345,6 @@ export function createCanvas(ctx) {
     },
     destroy() {
       destroyed = true;
-      if (raf) cancelAnimationFrame(raf);
       if (surfRaf) cancelAnimationFrame(surfRaf);
       if (activeDrag) activeDrag.cancel();
       sizeRO.disconnect();
