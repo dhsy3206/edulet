@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/index.js';
 import { createSession } from '../server/auth.js';
+import { isBadPort } from '../tools/ports.mjs';
+
+export { listenOnGoodPort } from '../tools/ports.mjs';
 
 const stubFetcher = async () => ({
   status: 200,
@@ -12,10 +15,25 @@ const stubFetcher = async () => ({
   body: Buffer.from('<html><head><title>Stub Title</title><meta property="og:description" content="Stub description"></head></html>'),
 });
 
+/**
+ * createApp on an OS-assigned port that fetch()/Chrome accept. `opts` is an object, or a function returning one — the function
+ * form is called again (with its temp folder removed) after a bad port, so a seeding start is never repeated on the same data.
+ */
+export async function createAppOnGoodPort(opts) {
+  for (let i = 0; i < 30; i++) {
+    const o = typeof opts === 'function' ? opts() : opts;
+    const running = await createApp(o);
+    if (!isBadPort(running.port)) return running;
+    await running.close();
+    if (typeof opts === 'function') fs.rmSync(o.dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+  throw new Error('no usable port');
+}
+
 /** Boot a server on a random port with a throw-away DATA_DIR. close() also removes the folder. */
 export async function startApp(opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edulet-test-'));
-  const running = await createApp({
+  const running = await createAppOnGoodPort({
     dataDir: dir, port: 0, host: '127.0.0.1', seed: false, quiet: true, authRateLimit: 100000,
     previewFetcher: stubFetcher, // never touch the real network from tests (pass previewFetcher: null to opt out)
     ...opts,
@@ -46,7 +64,15 @@ export class Client {
       if (raw) payload = body;
       else { h['content-type'] = h['content-type'] || 'application/json'; payload = JSON.stringify(body); }
     }
-    const res = await fetch(this.base + url, { method, headers: h, body: payload, redirect: 'manual' });
+    let res;
+    try {
+      res = await fetch(this.base + url, { method, headers: h, body: payload, redirect: 'manual' });
+    } catch (e) {
+      // undici's bare "fetch failed" hides why (ECONNRESET on a reused socket, ECONNREFUSED, …): say it, so a flaky run can be understood
+      const why = e && e.cause ? `${e.cause.code || ''} ${e.cause.message || e.cause}`.trim() : '';
+      if (why) e.message = `${e.message} (${why}) ${method} ${this.base}${url}`;
+      throw e;
+    }
     for (const sc of res.headers.getSetCookie?.() ?? []) {
       const m = /^edulet_sid=([^;]*)/.exec(sc);
       if (m) this.cookie = /Max-Age=0/i.test(sc) || !m[1] ? null : `edulet_sid=${m[1]}`;

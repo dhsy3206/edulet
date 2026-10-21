@@ -19,11 +19,13 @@
     if (v.length > C.LIMITS.passwordMax) throw bad('bad_request', '비밀번호가 너무 길어요.');
     return v;
   }
-  const publicUser = (row) => E.userJson(row);
+  // same shape as the Node server's publicUser(): the self-only extras are there too (no Google here — see CONTRACT §12)
+  const publicUser = (row) => ({ ...E.userJson(row), hasPassword: !!row.password_hash, googleEmail: null });
 
   router.add('GET', '/health', async () => ({ ok: true }));
+  // Sign in with Google needs a server that can keep a client secret: this browser-only demo reports it as off, so the page hides the button
   router.add('GET', '/config', async () => ({
-    allowRegister: true, maxUploadMb: C.MAX_UPLOAD_MB, linkPreview: true, version: C.VERSION, demo: true,
+    allowRegister: true, maxUploadMb: C.MAX_UPLOAD_MB, linkPreview: true, google: false, googleDomains: [], version: C.VERSION, demo: true,
   }));
 
   router.add('POST', '/auth/register', async (c) => {

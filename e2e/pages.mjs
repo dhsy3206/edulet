@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, extname, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchBrowser, findChrome } from '../tools/cdp.mjs';
+import { listenOnGoodPort } from '../tools/ports.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -73,7 +74,7 @@ const pagesServer = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': MIME[extname(file).toLowerCase()] || 'application/octet-stream', 'Content-Length': body.length, 'Cache-Control': 'max-age=600' });
   res.end(req.method === 'HEAD' ? undefined : body);
 });
-await new Promise((r) => pagesServer.listen(0, '127.0.0.1', r));
+await listenOnGoodPort(pagesServer);
 const ORIGIN = `http://127.0.0.1:${pagesServer.address().port}`;
 const APP = ORIGIN + '/edulet';
 
@@ -358,6 +359,7 @@ try {
     await page.waitFor('[data-role="auth"] input[name=displayName]');
     // modal() hands focus to the first field once it is on screen — typing before that would be redirected into it
     await page.waitFor(`document.activeElement === document.querySelector('[data-role="auth"] input[name=displayName]')`);
+    check('P3 데모(서버 없음)에는 Google 로그인 버튼이 없음', (await page.count('[data-role="google-login"]')) === 0 && (await page.eval(`fetch('/edulet/api/config').then(r => r.json()).then(c => c.google === false)`)));
     await page.type('[data-role="auth"] input[name=displayName]', '김하늘');
     await page.type('[data-role="auth"] input[name=username]', 'haneul2026');
     await page.type('[data-role="auth"] input[name=password]', 'password-1234');

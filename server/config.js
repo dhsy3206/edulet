@@ -13,6 +13,16 @@ function normalizeSeed(v) {
   return 'on';
 }
 
+/** '' or the origin of an http(s) address (path and trailing slash dropped); anything else is a startup error, not a silent default. */
+function publicOrigin(v) {
+  const s = String(v ?? '').trim();
+  if (!s) return '';
+  let u;
+  try { u = new URL(s); } catch { u = null; }
+  if (!u || (u.protocol !== 'http:' && u.protocol !== 'https:')) throw new Error(`EDULET_PUBLIC_URL 은 https://edulet.example.com 같은 주소여야 해요: ${s}`);
+  return u.origin;
+}
+
 export function loadConfig(o = {}) {
   const env = process.env;
   const get = (k, d) => {
@@ -49,6 +59,12 @@ export function loadConfig(o = {}) {
     boardMaxPosts: num('BOARD_MAX_POSTS', 5000), // posts per board
     loginFailMax: num('LOGIN_FAIL_MAX', 10), // failed logins per username per 15 minutes
     memberRateMax: num('MEMBER_RATE', 30), // member add / username lookups per user per minute
+    // "Sign in with Google" (CONTRACT §5): on only when both the client id and its secret are set --------------
+    googleClientId: String(get('GOOGLE_CLIENT_ID', '')).trim(),
+    googleClientSecret: String(get('GOOGLE_CLIENT_SECRET', '')).trim(),
+    publicUrl: publicOrigin(get('PUBLIC_URL', '')), // https://edulet.example.com — builds the OAuth redirect URI (else taken from the request)
+    googleDomains: String(get('GOOGLE_DOMAINS', '')).split(',').map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean), // only these Google Workspace domains may sign in
+    googleRateMax: num('GOOGLE_RATE', 300), // Google sign-in attempts per client address per minute (a whole class may share one school IP)
   };
   return Object.assign(cfg, o.config || {});
 }

@@ -24,7 +24,7 @@ docs/          CONTRACT.md REFERENCE.md screens/
 data/          (gitignore) edulet.db, uploads/
 ```
 
-설정(환경변수, `server/config.js`): `PORT`(3000) `HOST`(0.0.0.0) `DATA_DIR`(./data) `SESSION_DAYS`(30) `MAX_UPLOAD_MB`(20) `ALLOW_REGISTER`(1) `SEED`(auto|0|1, auto = DB 가 비었을 때만) `TRUST_PROXY`(0) `LINK_PREVIEW`(1) `COOKIE_SECURE`(auto: TRUST_PROXY 이고 X-Forwarded-Proto=https 이면 Secure). 모두 접두사 `EDULET_`.
+설정(환경변수, `server/config.js`): `PORT`(3000) `HOST`(0.0.0.0) `DATA_DIR`(./data) `SESSION_DAYS`(30) `MAX_UPLOAD_MB`(20) `ALLOW_REGISTER`(1) `SEED`(auto|0|1, auto = DB 가 비었을 때만) `TRUST_PROXY`(0) `LINK_PREVIEW`(1) `COOKIE_SECURE`(auto: `PUBLIC_URL` 이 https 이거나, TRUST_PROXY 이고 X-Forwarded-Proto=https 이면 Secure). 모두 접두사 `EDULET_`.
 남용 방지 한도(모두 양수, 잘못된 값은 기본값; 의미와 오류 코드는 §11):
 
 | 환경변수 | 기본 | 뜻 |
@@ -40,11 +40,20 @@ data/          (gitignore) edulet.db, uploads/
 | `BOARD_MAX_POSTS` | 5000 | 보드 하나의 게시물 수 |
 | `LOGIN_FAIL_MAX` | 10 | 사용자명당 15분에 허용하는 로그인(비밀번호 확인) 실패 수 |
 | `MEMBER_RATE` | 30 | 사용자당 분당 구성원 추가(=사용자명 조회) 수 |
+| `GOOGLE_RATE` | 300 | 접속 주소 하나의 분당 Google 로그인 시도(시작+돌아옴 합산). 비밀번호 해시를 돌리지 않으므로 게스트 한도처럼 넉넉하다 |
+
+**Google 로그인 설정**(§5 "Google 로그인"; 모두 접두사 `EDULET_`):
+
+| 환경변수 | 기본 | 뜻 |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` | (없음) | **둘 다 있을 때만** Google 로그인이 켜진다(`GET /config` 의 `google: true`). 하나만 있으면 꺼진 것으로 본다 |
+| `PUBLIC_URL` | (없음) | 이 서비스의 주소(`https://edulet.example.com`). Google 에 등록한 "승인된 리디렉션 URI" = `<PUBLIC_URL>/api/auth/google/callback`. 없으면 요청 자체의 주소(`Host`, `TRUST_PROXY` 일 때만 `X-Forwarded-Host/Proto`)로 만든다. 경로·끝 슬래시는 버리고 origin 만 쓰며, http(s) 주소가 아니면 **시작할 때 오류**. https 주소이면 `COOKIE_SECURE=auto` 에서도 세션·흐름 쿠키에 `Secure` 가 붙는다(`COOKIE_SECURE=0` 이 명시되면 그쪽) |
+| `GOOGLE_DOMAINS` | (없음) | 쉼표로 나눈 Google Workspace 도메인(`school.ac.kr, edu.example`). 있으면 그 도메인 계정만 로그인(§5). `gmail.com` 을 적으면 일반 Gmail 도 허용 |
 
 `createApp({ dataDir, port, seed })` 를 export 해서 테스트가 임시 폴더·임의 포트로 서버를 띄우고 `{ url, server, close() }` 를 받는다. `npm start` 는 이것을 호출한다. http 서버는 `headersTimeout` 20초, `requestTimeout` 10분을 명시한다.
 
 ### 운영 참고
-- **HTTPS 뒤에 둘 때**: 세션 쿠키는 `COOKIE_SECURE=auto` 에서 `TRUST_PROXY=1` 이고 프록시가 `X-Forwarded-Proto: https` 를 보낼 때만 `Secure` 가 붙는다. TLS 를 프록시가 끝내는 배포는 `EDULET_TRUST_PROXY=1` (프록시가 `X-Forwarded-For`·`X-Forwarded-Proto` 를 **덮어쓰도록** 설정) 또는 `EDULET_COOKIE_SECURE=1` 을 명시한다. 프록시 뒤에서 `TRUST_PROXY` 를 켜지 않으면 모든 사용자가 한 IP 로 보여 IP 단위 한도(인증 분당 20회, 실시간 연결 60개)를 함께 쓴다. 반대로 서버를 직접 공개하면서 `TRUST_PROXY=1` 을 켜면 `X-Forwarded-For` 를 클라이언트가 속일 수 있으니 켜지 않는다.
+- **HTTPS 뒤에 둘 때**: 세션 쿠키는 `COOKIE_SECURE=auto` 에서 `PUBLIC_URL` 이 https 주소이거나(Google 로그인 설정에 쓰는 그 값), `TRUST_PROXY=1` 이고 프록시가 `X-Forwarded-Proto: https` 를 보낼 때만 `Secure` 가 붙는다. (https `PUBLIC_URL` 인 채로 http 로 접속해 시험하면 브라우저가 `Secure` 쿠키를 받지 않아 로그인이 안 된다 — 그때는 `COOKIE_SECURE=0`.) TLS 를 프록시가 끝내는 배포는 `EDULET_TRUST_PROXY=1` (프록시가 `X-Forwarded-For`·`X-Forwarded-Proto` 를 **덮어쓰도록** 설정) 또는 `EDULET_COOKIE_SECURE=1` 을 명시한다. 프록시 뒤에서 `TRUST_PROXY` 를 켜지 않으면 모든 사용자가 한 IP 로 보여 IP 단위 한도(인증 분당 20회, 실시간 연결 60개)를 함께 쓴다. 반대로 서버를 직접 공개하면서 `TRUST_PROXY=1` 을 켜면 `X-Forwarded-For` 를 클라이언트가 속일 수 있으니 켜지 않는다.
 - **`linkAccess` 와 구성원 역할**: 실효 역할은 소유자 → 구성원 행(그 역할 그대로) → `linkAccess`(§4) 순이다. 구성원 행은 링크 역할을 **문자 그대로 덮어쓰므로** `read` 구성원이 있는 보드가 `linkAccess=write` 이면, 그 사람이 로그아웃하고 새 게스트로 들어오면 `write` 를 얻는다(막으려면 `linkAccess` 를 낮추거나 `visibility=private`). 서버는 이를 막지 않는다.
 - **게스트와 사용자 단위 한도**: 업로드 용량·쓰기·링크 미리보기·실시간 연결 한도는 *사용자*(게스트 포함) 단위다. 게스트 계정은 새로 만들 수 있으므로(IP 당 분당 20회) 이 한도들은 IP 단위 인증 한도·서버 전체 상한(동시 업로드 6, 동시 미리보기 8, 소켓 2000)과 함께 작동한다. 누구나 쓸 수 있는 `linkAccess=write` 보드를 공개 서버에 둘 때는 디스크 여유를 감시한다.
 - **고아 업로드 정리**: 서버를 시작할 때와 6시간마다, 24시간이 지났는데도 게시물 첨부·링크 미리보기 이미지·보드 배경이 가리키지 않는 업로드(파일과 행)를 지운다(올리고 게시하지 않은 파일, 게시물이 사라진 파일). 1시간 넘은 `.part` 임시 파일도 지운다. 이 정리가 없던 버전에서 올라온 데이터는 첫 시작 때 한 번 정리된다.
@@ -73,7 +82,8 @@ ATTACH_KINDS = image | file | link | video
 
 ```sql
 users(id INTEGER PK, username TEXT UNIQUE COLLATE NOCASE NULL, display_name TEXT NOT NULL, password_hash TEXT NULL,
-      avatar_color TEXT NOT NULL, is_guest INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL)
+      avatar_color TEXT NOT NULL, is_guest INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+      google_sub TEXT NULL (부분 UNIQUE 인덱스: NULL 이 아닌 값만), google_email TEXT NULL)   -- v3, Google 로그인(§5)
 sessions(token_hash TEXT PK, user_id → users ON DELETE CASCADE, expires_at INTEGER, created_at INTEGER)
 boards(id PK, slug TEXT UNIQUE, owner_id → users, title, description DEFAULT '', format DEFAULT 'wall', wallpaper DEFAULT 'green',
        font DEFAULT 'sans', color_scheme DEFAULT 'light', visibility DEFAULT 'link', link_access DEFAULT 'comment',
@@ -121,16 +131,27 @@ pending 게시물은 **moderate 이상과 작성자 본인에게만** 목록·�
 ## 5. REST API (모든 경로 `/api` 아래, JSON, 쿠키 `edulet_sid` HttpOnly·SameSite=Lax·Path=/)
 
 사용자 JSON `User`: `{ id, username (게스트는 null), displayName, avatarColor, isGuest }`
+`/auth/*` 응답(본인)에만 두 칸이 더 있다: `hasPassword`(비밀번호로 로그인할 수 있는가 — Google 로만 만든 계정은 `false`)와 `googleEmail`(연결된 Google 계정의 이메일, 없으면 `null`). **다른 사람에게 가는 JSON(작성자·소유자·구성원·내보내기·SSE)에는 절대 없다.**
 **`username`(로그인 이름)은 본인과 그 보드의 admin 에게만 실제 값**이고, 그 밖의 보는 사람에게는 `null` 이다(게시물·댓글의 `author`, 보드의 `owner`, 내보내기, SSE 이벤트 모두). `/auth/*` 응답은 항상 본인이므로 그대로 온다. admin 의 구성원 목록(`GET /boards/:slug/members`, 스냅샷의 `members`, 구성원 추가·수정 응답)은 전원의 `username` 을 담는다. 클라이언트는 `username` 이 `null` 이면 "@아이디" 표시를 생략한다(게스트와 구별할 필요가 있으면 `isGuest` 를 쓴다).
 
 ### 인증
-- `GET  /config` → `{ allowRegister, maxUploadMb, linkPreview, version }`
+- `GET  /config` → `{ allowRegister, maxUploadMb, linkPreview, google, googleDomains, version }` (`google`: Google 로그인이 켜졌는가 · `googleDomains`: 켜졌고 도메인 제한이 있을 때만 그 목록, 아니면 `[]`. 클라이언트 id 는 내보내지 않는다)
 - `GET  /health` → `{ ok:true }`
 - `GET  /auth/me` → `{ user: User|null }`
 - `POST /auth/register {username,password,displayName}` → `{ user }` (+쿠키). 중복 409 `username_taken`
 - `POST /auth/login {username,password}` → `{ user }`. 실패 401 `bad_credentials` (사용자 없음/비번 틀림 구분 금지, 해시 비교 시간 균일화). **계정별 실패 제한**: 같은 사용자명(소문자로 정규화, 계정이 있든 없든)으로 15분 안에 `LOGIN_FAIL_MAX`(10)번 실패하면 그 이름은 잠긴다 — 잠긴 동안은 올바른 비밀번호여도 비밀번호를 확인하지 않고 429 `rate_limited`(+`Retry-After`)를 준다. 존재하지 않는 이름도 똑같이 잠기므로 응답으로 계정 존재를 알 수 없다. 로그인에 성공하면 그 이름의 실패 횟수가 지워진다. (남이 일부러 실패를 쌓아 계정을 15분간 잠글 수 있다는 점은 이 설계의 알려진 대가다.)
 - `POST /auth/guest {displayName}` → `{ user }` (+쿠키, 게스트 계정 생성). 이미 로그인 상태면 표시 이름만 갱신
 - `POST /auth/logout` → `{ ok:true }`
+- **Google 로그인** — OAuth 2.0 인증 코드 흐름 + PKCE(S256), **전부 서버에서** 한다(브라우저에 Google 스크립트를 싣지 않으므로 CSP 는 그대로). 로그인·가입의 두 경로(`start`·`callback`)는 **JSON 이 아니라 302** 로 끝나고, 연결·해제(`link`·`unlink`)는 JSON 이다.
+  - `GET /auth/google/start?next=<경로>` → `accounts.google.com` 으로 302. 요청 한 번마다 `state`·`nonce`·PKCE `code_verifier`(48바이트 무작위)를 만들어 **쿠키 `edulet_oauth`**(HttpOnly·SameSite=Lax·`Path=/api/auth/google`·10분)에 담는다 — 서버 메모리엔 아무것도 두지 않는다. 쿠키 값은 `base64url(JSON{s,n,v,r,x,m,u,e})` + `.` + `base64url(HMAC-SHA256(클라이언트 시크릿, "edulet-oauth-flow|" + 앞 base64url))` — **브라우저는 나를 수 있어도 만들 수는 없다**(서명이 틀리면 `google_state`, Google 은 부르지도 않는다. 그래서 남이 `redirect_uri`·verifier 를 마음대로 골라 우리 시크릿으로 토큰 교환을 시킬 수 없다). 쿠키가 요청한 브라우저에 묶여 있어서 남이 만든 `code` 를 내 브라우저로 흘려 넣는 로그인 CSRF 도 막힌다. 클라이언트 시크릿과 verifier 는 Google 주소에 실리지 않는다(`code_challenge` 만). 요청 범위 `openid email profile`, `prompt=select_account`, 허용 도메인이 **하나뿐이고 gmail 이 아니면** `hd` 힌트(힌트일 뿐 — 판정은 아래 `hd` 검사). `mode` 같은 인자는 없다(연결은 아래 POST).
+  - `GET /auth/google/callback?code&state` → 쿠키의 서명과 `state`(시간 상수 비교)를 확인하고, `code` 를 `https://oauth2.googleapis.com/token` 에 시크릿·verifier 와 함께 보내 ID 토큰을 받는다(TLS 로 Google 에서 직접 받은 토큰이므로 서명 검증은 하지 않고 **클레임**을 검사: `iss` ∈ {`https://accounts.google.com`, `accounts.google.com`} · `aud` = 클라이언트 id · `exp` 미경과(시계 오차 1분) · `nonce` 일치 · `sub` 문자열 ≤255 · `email` 형식 · `email_verified`). 흐름 쿠키는 결과와 상관없이 즉시 지운다(1회용). 쿠키는 무상태라 브라우저가 남겨 둔 사본을 다시 보낼 수 있으므로, **서버가 응답한 `state` 를 기억해 한 번 시작한 흐름은 한 번만 답을 받는다**(두 번째는 `google_state`, Google 을 부르지 않는다 — 재시작하면 잊지만 쿠키 수명 10분 안의 한 번 더가 최악이다). 토큰 교환은 우리 시크릿을 쓰는 호출이라 **서버 전체에서 분당 1200회**로 묶는다(넘으면 `google_rate`; 접속 주소별 `GOOGLE_RATE` 와 별개 — 위조·재사용 쿠키는 그 앞에서 걸러져 이 예산을 쓰지 않는다).
+  - **`GOOGLE_DOMAINS` 가 있으면**: `hd` 클레임(Workspace 도메인)이 목록에 있어야 한다. `hd` 가 없는 일반 계정은 이메일 도메인이 `gmail.com`/`googlemail.com` 이고 그것이 목록에 있을 때만 통과 — **이메일 도메인만 보고 학교 계정으로 믿지 않는다.** 로그인·연결 둘 다 적용.
+  - 로그인(`start`→`callback`): `google_sub` 로 계정을 찾는다. 있으면 로그인(이메일이 바뀌었으면 갱신, **표시 이름은 건드리지 않는다**). 없으면 새 계정: `is_guest=0`, `password_hash=NULL`, 표시 이름 = Google 이름(제어 문자 제거·40자까지, 없으면 "구글 사용자" — **이메일 앞부분은 쓰지 않는다**, 학교에선 학번인 경우가 많은데 표시 이름은 공개다), **`username` = `g-` + 무작위 12자리 16진수**(보드 구성원 초대에 쓰는 아이디 — 이메일 주소를 공개 이름으로 만들지 않으려고 일부러 무작위). `ALLOW_REGISTER=0` 이면 새 계정은 만들지 않고 이미 연결된 계정만 로그인된다. **이메일로 기존 비밀번호 계정에 자동으로 붙이지 않는다**(연결은 아래 `link` 로만). 기존 세션(게스트 포함)은 지우고 새 세션 쿠키를 준다(`/auth/login` 과 같음).
+  - `POST /auth/google/link {currentPassword, next?}` → `{ url }` + 흐름 쿠키(`Set-Cookie`). 로그인한 **비밀번호 계정**만(비게스트·`password_hash` 있음), 이미 Google 이 연결돼 있으면 409 `google_already_linked`, 꺼져 있으면 404 `google_disabled`, 로그인 안 했으면 401, 게스트·비밀번호 없는 계정은 403. **현재 비밀번호를 먼저 확인한다**(§5 `PATCH /auth/me` 의 `newPassword` 와 같은 확인·같은 한도: IP 당 인증 분당 20회 + 계정별 15분 `LOGIN_FAIL_MAX` 번 틀림 → 429; 틀리면 401 `bad_credentials`. 시도는 **느린 해시를 돌리기 전에** 세고 맞으면 지운다 — 동시에 날린 추측이 한꺼번에 검사를 통과하지 못하게) — 탈취된 세션만으로 공격자 자신의 Google 계정을 "두 번째 출입구"로 심어 두는 길을 막기 위해서다(소유자가 비밀번호를 바꿔 다른 세션을 지워도 남는 뒷문이 되므로). `url` 은 Google 주소이고 페이지가 그리로 이동한다. 같은 출처 POST 만 받는다(`bad_origin`). 돌아왔을 때(`callback`)는 **시작할 때와 같은 사용자가 로그인돼 있는지** 다시 확인(`google_need_login`), 그 Google 계정이 이미 다른 사용자에게 연결돼 있으면 `google_taken`. 성공하면 세션은 그대로, 플래시 `google_linked`.
+  - `POST /auth/google/unlink {currentPassword}` → `{ user }`. 연결을 푼다(`google_sub`·`google_email` 삭제). 같은 비밀번호 확인·한도. **비밀번호가 있는 계정만**(없으면 풀었다가 들어올 방법이 없어지므로 403), 연결이 없으면 409 `google_not_linked`. **푼 사람 말고 그 계정의 다른 모든 세션은 지워지고 그 세션들의 열린 SSE 연결도 닫힌다**(비밀번호 변경과 같음 — 연결 해제는 "누가 내 계정에 Google 을 심었나" 싶을 때의 복구 동작이다). 푼 뒤 같은 Google 계정으로 로그인하면 새 계정이 만들어진다.
+  - **돌아가는 곳 `next`**: 이 사이트 안의 경로만 — `/` 로 시작하고 **인쇄 가능한 ASCII**(`0x21–0x7e`, 역슬래시 제외)만, 500자 이하, `//` 로 시작하지 않고, `/api/…`·`/uploads/…` 가 아니어야 한다(아니면 `/` — `/./api`·`/%2e/api` 처럼 URL 파서가 정리해서 보는 경로로 판단한다). 한글 등은 브라우저가 퍼센트 인코딩해서 보내므로 정상 흐름은 영향이 없고, 손으로 만든 비ASCII 주소가 가입 직후 리디렉션을 깨뜨리는 일(헤더에 못 쓰는 문자)을 막는다. 성공이든 실패든 `next` 로 302 하고 **쿠키 `edulet_flash`**(JS 가 읽는다 — HttpOnly 아님, `Path=/`, 60초)에 결과 코드를 한 단어로 싣는다: 성공 `google_ok`(기존 계정) · `google_new`(방금 가입) · `google_linked`; 실패 `google_denied`(Google 에서 취소) · `google_state`(쿠키 없음/서명 불량/만료/state 불일치) · `google_failed`(토큰 교환 실패·클레임 불량·10초 시간 초과) · `google_domain` · `google_unverified` · `google_disabled`(꺼져 있음) · `google_register_closed` · `google_taken` · `google_already_linked` · `google_need_login` · `google_rate`. 프런트(`showAuthFlash`)가 읽고 지우며 코드마다 한국어 안내를 보여 준다. 예상 못 한 서버 오류만 JSON 500(그 로그에는 `code`·`state` 가 든 쿼리를 남기지 않는다).
+  - 쿠키 `Secure` 는 세션 쿠키와 같은 규칙(§1 `COOKIE_SECURE`) — **`PUBLIC_URL` 이 https 이면 `auto` 에서도 `Secure`** 가 붙는다. 배포 가정: 같은 상위 도메인의 **믿을 수 없는 형제 서브도메인이 없다**(그런 곳은 이 쿠키들을 심을 수 있다 — 세션 쿠키도 마찬가지). Google 토큰은 저장하지 않는다 — 로그인 한 번에만 쓰고 버린다. 프로필 사진은 쓰지 않는다.
+  - 사용자 JSON 의 `username` 이 `g-…` 여도 비밀번호 로그인은 항상 `bad_credentials`(해시가 없으므로), `PATCH /auth/me` 의 `newPassword` 는 403.
 - `PATCH /auth/me {displayName?, avatarColor?, currentPassword?, newPassword?}` → `{ user }`. 사용자당 분당 30회(429 `rate_limited`). `newPassword` 가 있으면(scrypt 를 돌린다) IP 당 인증 한도(분당 20회)도 함께 쓰고, 계정별로 틀린 `currentPassword` 가 15분에 `LOGIN_FAIL_MAX` 번 쌓이면 잠긴다(429 `rate_limited`). 비밀번호를 바꾸면 **다른 모든 세션이 삭제되고 그 세션들의 열린 SSE 연결도 즉시 닫힌다**(바꾼 세션의 연결은 유지).
 - 비밀번호는 `crypto.scrypt`(솔트 16B, N=2^15 이상) 로 `scrypt$N$r$p$salt$hash` 저장. 세션 토큰 32B 랜덤, DB 에는 SHA-256 만 저장. 로그인·가입·게스트: IP 당 분당 20회 제한(429 `rate_limited`).
 
@@ -323,6 +344,8 @@ class BoardController {
 | 로그인 실패 | 사용자명당 15분 10회 | 429 `rate_limited` (§5 인증) |
 | 비밀번호 변경 | IP 당 분당 20회(인증 한도 공유) + 계정별 15분 10회 틀림 | 429 `rate_limited` |
 | 프로필 수정(`PATCH /auth/me`) | 사용자당 분당 30 | 429 `rate_limited` |
+| Google 로그인(`/auth/google/start`·`/callback`) | IP 당 분당 `GOOGLE_RATE`(300), 두 경로 합산 + 서버 전체 토큰 교환 분당 1200 | JSON 이 아니라 돌아갈 주소로 302 + 플래시 `google_rate` (§5) |
+| Google 연결·해제(`POST /auth/google/link`·`/unlink`) | 비밀번호 변경과 같음: IP 당 인증 분당 20회(공유) + 계정별 15분 10회 틀림(공유) | 429 `rate_limited` / 401 `bad_credentials` |
 | 구성원 추가(사용자명 조회) | 사용자당 분당 30 | 429 `rate_limited` |
 | 링크 미리보기 | 사용자당 분당 20 · 호스트당 분당 60 · 동시 8 (§5) | 429 `rate_limited`(사용자) / 최소 미리보기(그 밖) |
 | 실시간 연결 | 사용자당 10 · 주소당 60 · 서버 2000 소켓 | 429 `too_many_connections` |
@@ -336,6 +359,7 @@ Pages 는 파일만 내려 주므로 Node 서버를 못 쓴다. 이 빌드에서
 
 - **하위 경로**: 앱은 `BASE`(`public/js/lib/base.js` — 서버 모드 `""`, Pages `"/edulet"`)를 모든 내부 URL(`/api`·`/uploads`·`/seed`·`/assets`·라우터 링크)에 붙인다. `demo/boot.js` 가 `window.EDULET_BASE`·`EDULET_DEMO` 를 앱보다 먼저 정하고 서비스 워커가 페이지를 제어할 때까지 `window.__edulet_ready` 로 부팅을 미룬다.
 - **달라지는 것**: 쿠키 대신 요청 헤더 `X-Edulet-Session`(localStorage `edulet_demo_sid`) · 보드 SSE 는 `EventSource` 대체물이 `POST /api/_demo/stream`(등록)·`/stream/ping`·`/stream/close` 로 워커에 연결을 알리고, 이벤트는 BroadcastChannel `edulet-demo-events` 로 같은 브라우저의 탭들에 전달(§6 이벤트 형식 그대로) · 비밀번호 PBKDF2-SHA256(WebCrypto 에 scrypt 없음) · 업로드 한도 10MB(Blob 으로 IndexedDB 에 저장, 서빙 헤더는 §11 하드닝 그대로) · 링크 미리보기는 브라우저에서 닿는 주소만(oEmbed best-effort) · 내보내기 링크는 헤더가 필요해 `api.download()` 로 받는다.
+- **Google 로그인은 없다**: 클라이언트 시크릿을 둘 서버가 없고, 데이터가 이 브라우저 안에만 있어 "다른 기기에서 같은 계정" 이라는 Google 로그인의 쓸모도 없다. 워커의 `GET /config` 는 `google:false` 라서 프런트가 버튼을 숨긴다. `/auth/*` 사용자 JSON 의 `hasPassword`(비게스트 `true`)·`googleEmail`(`null`)은 서버 모드와 같은 모양으로 낸다.
 - **없는 것**: §11 의 요청·업로드 한도와 SSRF 검사(자기 브라우저 안에서만 도는 데모라 대상이 아님). 한도 테스트(`test/`)는 서버 모드 전용이다.
 - **데모 전용 경로**: `/api/_demo/*`(스트림 등록, `reset` = 시드 복원). 초기화는 같은 브라우저의 모든 탭을 다시 불러온다.
 - **검증**: `npm run e2e:pages` (`e2e/pages.mjs`) — `/edulet/` 아래 정적 서버(없는 경로는 `404.html`, Pages 와 같음)로 빌드를 띄워 부팅·딥링크·두 탭 실시간·보드 생성·7형식·업로드·내보내기·로그아웃/로그인·초기화·워커 재시작 복구·바깥 요청 없음을 본다.

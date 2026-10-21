@@ -59,6 +59,7 @@ docker run -p 3000:3000 -v edulet-data:/data edulet
 | 정리 | 카드 끌어서 순서 변경·섹션 이동, 섹션 추가·이름 변경·이동·삭제, 캔버스 자유 이동·폭 조절 |
 | 상호작용 | 댓글, 반응(좋아요 · 투표 · 별 · 점수 1~10 · 이모지 중 보드마다 하나), 접속자 표시 |
 | 보기 | 상세 보기(이전/다음, 키보드), 슬라이드쇼(자동 재생), 검색 |
+| 계정 | 아이디·비밀번호 가입, 게스트 참여, **Google 계정 로그인**(선택 — 키를 설정하면 켜짐), 기존 계정에 Google 연결 |
 | 공유·권한 | 링크 공개/비공개, 링크 접속자 권한(보기·댓글·글쓰기·관리), 구성원별 역할, QR 코드, 승인제(글을 올리면 관리자 승인 뒤 공개) |
 | 관리 | 배경 10종 + 직접 올린 이미지, 글꼴, 카드 계열(밝음/어두움), 내보내기(JSON·CSV), 보드 복제, 템플릿(KWL·돌아보기·연수 자료) |
 
@@ -81,7 +82,10 @@ docker run -p 3000:3000 -v edulet-data:/data edulet
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | 접속 주소 |
 | `DATA_DIR` | `./data` | DB(`edulet.db`)와 업로드 파일 위치 — **백업은 이 폴더만** |
 | `SEED` | `auto` | `auto` = DB 가 비었을 때만 데모 보드 생성, `0` = 끄기, `1` = 항상 |
-| `ALLOW_REGISTER` | `1` | `0` 이면 가입 막기(기존 계정·게스트만) |
+| `ALLOW_REGISTER` | `1` | `0` 이면 가입 막기(기존 계정·게스트만 — Google 로 새로 가입하는 것도 막힙니다) |
+| `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` | 없음 | **둘 다 있으면** 로그인 창에 "Google 계정으로 계속하기"가 나타납니다 → [아래](#google-로그인-켜기) |
+| `PUBLIC_URL` | 없음 | 서비스 주소(`https://edulet.example.com`). Google 로그인의 돌아올 주소를 만드는 데 씁니다 |
+| `GOOGLE_DOMAINS` | 없음 | 쉼표로 나눈 학교·기관 도메인(`school.ac.kr`) — 있으면 그 Google Workspace 계정만 로그인 |
 | `MAX_UPLOAD_MB` | `20` | 업로드 한도 |
 | `SESSION_DAYS` | `30` | 로그인 유지 기간 |
 | `LINK_PREVIEW` | `1` | `0` 이면 서버가 외부 주소를 가져오지 않음(호스트 이름만 표시) |
@@ -92,10 +96,39 @@ docker run -p 3000:3000 -v edulet-data:/data edulet
 
 > 공개 서버로 운영한다면: HTTPS + `TRUST_PROXY=1` + `COOKIE_SECURE=1`, 프록시에서 SSE 경로(`/api/boards/*/events`)의 응답 버퍼링을 끄세요(nginx: `proxy_buffering off;`). 누구나 쓸 수 있는 연습장이 필요 없으면 `SEED=0` 을 권합니다.
 
+### Google 로그인 켜기
+
+학생·교사가 새 비밀번호를 만들지 않고 **Google 계정으로 가입·로그인**하게 할 수 있습니다. 서버가 Google 에서 직접 인증 코드를 받아 처리하는 방식(OAuth 2.0 인증 코드 + PKCE)이라 **브라우저에 Google 스크립트가 올라가지 않고**, 키를 서버에 두는 것만 설정하면 됩니다. 키를 넣지 않으면 버튼 자체가 나타나지 않고 지금까지와 똑같이 동작합니다.
+
+1. [Google Cloud 콘솔](https://console.cloud.google.com/)에서 프로젝트를 만들고(또는 고르고) **OAuth 동의 화면**(Google Auth Platform)을 구성합니다. 학교 Workspace 안에서만 쓸 거라면 사용자 유형 **내부**, 아무 Google 계정이나 받으려면 **외부** 를 고르고 상태를 **프로덕션으로 게시**하세요(테스트 상태에서는 등록한 테스트 사용자만 로그인됩니다). 요청 범위는 `openid` · `email` · `profile` 세 가지뿐이라 별도 심사가 필요한 범위가 없습니다.
+2. **사용자 인증 정보 → OAuth 클라이언트 ID 만들기**에서 유형을 **웹 애플리케이션**으로 하고 **승인된 리디렉션 URI** 에 정확히 아래 주소를 넣습니다(`승인된 JavaScript 원본`은 필요 없습니다).
+   - 운영: `https://서비스주소/api/auth/google/callback`
+   - 내 컴퓨터에서 시험: `http://localhost:3000/api/auth/google/callback`
+3. 발급된 **클라이언트 ID** 와 **클라이언트 보안 비밀**을 환경변수로 넘기고 서버를 다시 시작합니다. 운영에서는 `PUBLIC_URL` 도 함께 지정하세요(리디렉션 URI 가 환경마다 흔들리지 않고, https 주소면 로그인 쿠키에 `Secure` 도 붙습니다 — 그 상태로 http 로 접속해 시험하면 로그인이 안 되니 그때는 `EDULET_COOKIE_SECURE=0`).
+
+```bash
+EDULET_GOOGLE_CLIENT_ID=123-abc.apps.googleusercontent.com \
+EDULET_GOOGLE_CLIENT_SECRET=GOCSPX-xxxx \
+EDULET_PUBLIC_URL=https://edulet.example.com \
+npm start
+
+# Docker
+docker run -p 3000:3000 -v edulet-data:/data \
+  -e EDULET_GOOGLE_CLIENT_ID=... -e EDULET_GOOGLE_CLIENT_SECRET=... -e EDULET_PUBLIC_URL=https://edulet.example.com edulet
+```
+
+콘솔 메뉴 이름은 Google 이 자주 바꾸므로 위 이름과 다를 수 있습니다. 어긋났을 때는 서버 로그에 `Google token exchange failed: … redirect_uri_mismatch` 처럼 Google 이 알려 주는 이유가 남습니다(비밀 값은 남기지 않습니다).
+
+- **학교 계정만**: `EDULET_GOOGLE_DOMAINS=school.ac.kr` 을 넣으면 그 Google Workspace 도메인 계정만 로그인됩니다. 서버는 이메일 주소 모양이 아니라 Google 이 보증하는 `hd`(도메인) 값으로 판정합니다. 일반 Gmail 도 받으려면 목록에 `gmail.com` 을 함께 적으세요.
+- **계정 모양**: Google 로 처음 들어오면 계정이 새로 만들어집니다. 표시 이름은 Google 이름(나중에 프로필에서 바꿀 수 있음)이고, 보드에 초대받을 때 쓰는 아이디는 **무작위 `@g-…`** 입니다 — 이메일 주소를 공개 이름으로 쓰지 않으려는 선택이라, 초대하려는 사람에게 프로필에 보이는 아이디를 물어보세요. 비밀번호는 없습니다. 이메일은 본인 프로필에만 보이고 다른 사람에게는 절대 나가지 않습니다.
+- **이미 비밀번호 계정이 있다면**: Google 로 처음 들어오면 *새 계정*이 만들어집니다(이메일이 같아도 자동으로 합치지 않습니다 — 남의 계정을 가로채는 길이 되기 때문). 기존 계정에 붙이려면 **기존 계정으로 로그인 → 프로필 → "Google 계정 연결하기"** 를 열고 **현재 비밀번호를 한 번 더 입력**하세요(남이 내 로그인 상태만 훔쳐서 자기 Google 계정을 몰래 붙이지 못하게 하는 확인입니다). 그 뒤로는 둘 중 어느 쪽으로든 같은 계정에 들어옵니다. 잘못 연결했다면 같은 곳의 "Google 연결 해제"(역시 비밀번호 확인)로 풀 수 있습니다 — 비밀번호가 없는 Google 전용 계정은 풀면 들어올 방법이 없어져서 풀 수 없습니다.
+- `ALLOW_REGISTER=0` 이면 Google 로 *새로* 가입하는 것도 막히고, 이미 연결된 계정만 들어올 수 있습니다.
+- 위 Pages 데모에서는 Google 로그인이 **없습니다**(서버가 없어 보안 비밀을 둘 곳이 없고, 데이터가 이 브라우저에만 있어 계정을 공유할 일도 없습니다).
+
 ## 구조
 
 ```
-server/   Node 서버 — http.js(라우터) auth/boards/posts/sections/comments/reactions/uploads/preview(SSRF 방어)/realtime(SSE)/seed
+server/   Node 서버 — http.js(라우터) auth/google(Google 로그인)/boards/posts/sections/comments/reactions/uploads/preview(SSRF 방어)/realtime(SSE)/seed
 public/   프런트 — js/lib(공용 기반·BoardController) js/views(앱 셸·페이지) js/board(보드 캔버스) css/ vendor/(QR)
           edulet-sw.js · demo/  Pages 데모용 서비스 워커 "서버"(IndexedDB 저장)와 부팅 스크립트
 seed/     데모 보드 JSON + 이미지
@@ -119,6 +152,7 @@ E2E 는 `tools/cdp.mjs`(Node 22 내장 WebSocket 으로 크롬 DevTools 프로�
 ## 보안 메모
 
 - 비밀번호는 scrypt, 세션 토큰은 서버에 해시만 저장, 쿠키는 HttpOnly·SameSite=Lax. 상태를 바꾸는 요청은 Origin 을 확인합니다.
+- Google 로그인은 서버가 인증 코드를 PKCE 와 함께 교환하고(`state`·`nonce` 는 요청한 브라우저의 HttpOnly 쿠키에 묶음, 1회용), 토큰의 발급자·대상·만료·nonce·이메일 확인 여부를 검사합니다. 진행 중인 로그인 정보를 담은 쿠키는 서버 비밀로 서명돼 있어 브라우저가 위조할 수 없고, 돌아갈 주소는 같은 사이트의 경로만, Google 토큰은 저장하지 않습니다. 기존 계정에 Google 을 붙이거나 떼려면 비밀번호를 다시 확인합니다.
 - 사용자 입력은 항상 텍스트 노드/속성으로만 DOM 에 넣고(`innerHTML` 미사용), 링크는 `http(s)` 만 허용, 영상 임베드는 `youtube-nocookie`/`player.vimeo.com` 만 허용합니다. CSP 가 인라인 스크립트를 막습니다.
 - 링크 미리보기는 서버가 외부 주소를 가져오므로 사설·루프백 주소와 리다이렉트를 모두 검사하고(SSRF 방어), 연결 시 검사한 주소로 고정합니다.
 - 업로드는 매직 바이트로 이미지를 검증하고(SVG 거부) 이미지가 아닌 파일은 항상 내려받기로만 제공합니다.
@@ -136,4 +170,4 @@ E2E 는 `tools/cdp.mjs`(Node 22 내장 WebSocket 으로 크롬 DevTools 프로�
 
 ## 알려진 한계
 
-Pages 데모는 위 표처럼 브라우저 한 곳에서만 동작하는 체험판입니다(비밀번호도 서버가 아니라 브라우저 안에서 PBKDF2 로 처리). 서버 모드는 서버 한 대·SQLite 한 파일 기준입니다(수백 명 동시 접속 교실 규모에 맞춤, 여러 서버로 나누려면 SSE 팬아웃을 바꿔야 함). 터치 화면에서는 카드를 끌지 않고 ⋮ 메뉴로 순서를 바꿉니다. 지도·타임라인 형식, 그림·녹음 첨부, 메일 알림, 외부 로그인(OAuth)은 만들지 않았습니다.
+Pages 데모는 위 표처럼 브라우저 한 곳에서만 동작하는 체험판입니다(비밀번호도 서버가 아니라 브라우저 안에서 PBKDF2 로 처리). 서버 모드는 서버 한 대·SQLite 한 파일 기준입니다(수백 명 동시 접속 교실 규모에 맞춤, 여러 서버로 나누려면 SSE 팬아웃을 바꿔야 함). 터치 화면에서는 카드를 끌지 않고 ⋮ 메뉴로 순서를 바꿉니다. 지도·타임라인 형식, 그림·녹음 첨부, 메일 알림, Google 외의 외부 로그인(카카오·네이버·Microsoft 등)은 만들지 않았습니다. Google 로그인은 진짜 Google 이 아니라 테스트용 가짜 Google 서버(`test/google-mock.js`)로 검증했습니다(키가 없어 실제 계정으로는 시험하지 못했습니다) — 처음 켤 때는 위 설정 뒤에 본인 Google 계정으로 한 번 로그인해 보세요.

@@ -7,6 +7,7 @@ import { loadConfig } from './config.js';
 import { openDb } from './db.js';
 import { Context, HttpError, RateLimiter, Router, sendJson, sendText } from './http.js';
 import { authenticate, hashPassword, registerAuth } from './auth.js';
+import { googleEnabled, registerGoogle } from './google.js';
 import { Hub } from './realtime.js';
 import { registerBoards } from './boards.js';
 import { registerSections } from './sections.js';
@@ -53,7 +54,13 @@ function sendError(app, req, res, err) {
     body = { error: { code: err.code, message: err.message } };
     headers = err.headers;
   } else if (!app.quiet) {
-    console.error(`[edulet] ${req.method} ${req.url}`, err);
+    // the Google callback's query holds a one-time code and the state: keep them out of the log
+    let where = req.url;
+    try {
+      const path = new URL(req.url, 'http://localhost').pathname; // "/api/auth/./google/callback" is the callback too
+      if (path.startsWith('/api/auth/')) where = path;
+    } catch { /* keep the raw url */ }
+    console.error(`[edulet] ${req.method} ${where}`, err);
   }
   if (res.headersSent) { res.destroy(); return; }
   sendJson(res, status, body, headers);
@@ -109,7 +116,8 @@ async function dispatch(app, req, res) {
  * @param {string} [opts.dataDir] @param {number} [opts.port] @param {string} [opts.host]
  * @param {boolean|string|number} [opts.seed] auto | on | off
  * Internal / test-only (never read from env or HTTP): config, quiet, publicDir, seedDir, authRateLimit, pingMs, presenceMinMs,
- * allowPrivatePreviewHosts (true | ['host:port']), previewFetcher, previewDnsLookup, previewLimits, uploadIdleMs, uploadGcMaxAgeMs.
+ * allowPrivatePreviewHosts (true | ['host:port']), previewFetcher, previewDnsLookup, previewLimits, uploadIdleMs, uploadGcMaxAgeMs,
+ * googleEndpoints ({ auth, token, timeoutMs, exchangesPerMinute } — a stand-in for Google's two OAuth addresses).
  */
 export async function createApp(opts = {}) {
   const config = loadConfig(opts);
@@ -130,6 +138,7 @@ export async function createApp(opts = {}) {
     preview: null,
     serveUpload: null,
     uploadIdleMs: opts.uploadIdleMs, // test-only: how long an upload body may stall (default 30 s)
+    googleEndpoints: opts.googleEndpoints ?? null, // test-only: where "Google" lives (default: the real accounts.google.com / oauth2.googleapis.com)
   };
   app.hub = new Hub(app, { pingMs: opts.pingMs ?? 25000, presenceMinMs: opts.presenceMinMs ?? 1000 });
   app.preview = new PreviewService({
@@ -146,9 +155,12 @@ export async function createApp(opts = {}) {
     allowRegister: config.allowRegister,
     maxUploadMb: config.maxUploadMb,
     linkPreview: config.linkPreview,
+    google: googleEnabled(app),
+    googleDomains: googleEnabled(app) ? config.googleDomains : [],
     version: app.version,
   }));
   registerAuth(app);
+  registerGoogle(app);
   registerBoards(app);
   registerSections(app);
   registerPosts(app);

@@ -91,7 +91,8 @@ async function request(method, path, body) {
   }
   if (!res.ok) {
     const e = data.error || {};
-    if (res.status === 401 && onUnauthorized) onUnauthorized();
+    // a wrong password (bad_credentials: sign-in, password change, Google link/unlink) is not "the session is gone"
+    if (res.status === 401 && e.code !== 'bad_credentials' && onUnauthorized) onUnauthorized();
     throw new ApiError(res.status, e.code, e.message, retryAfterOf(res));
   }
   return data;
@@ -160,7 +161,7 @@ export const api = {
         if (xhr.status >= 200 && xhr.status < 300) resolve(data);
         else {
           const e = data.error || {};
-          if (xhr.status === 401 && onUnauthorized) onUnauthorized();
+          if (xhr.status === 401 && e.code !== 'bad_credentials' && onUnauthorized) onUnauthorized();
           const ra = Number(xhr.getResponseHeader('Retry-After'));
           reject(new ApiError(xhr.status, e.code, e.message, Number.isFinite(ra) && ra > 0 ? Math.ceil(ra) : 0));
         }

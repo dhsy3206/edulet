@@ -103,6 +103,11 @@ CREATE INDEX idx_uploads_board ON uploads(board_id);
   /* v2: per-user upload quota (SUM of the last 24 h) and the orphan sweep */ `
 CREATE INDEX idx_uploads_user ON uploads(user_id, created_at);
 `,
+  /* v3: "Sign in with Google" — the Google account (stable "sub" id + the e-mail shown back to its owner) linked to a user */ `
+ALTER TABLE users ADD COLUMN google_sub TEXT;
+ALTER TABLE users ADD COLUMN google_email TEXT;
+CREATE UNIQUE INDEX idx_users_google_sub ON users(google_sub) WHERE google_sub IS NOT NULL;
+`,
 ];
 
 const norm = (p) => p.map((v) => (v === undefined ? null : v === true ? 1 : v === false ? 0 : v));

@@ -4,8 +4,9 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp } from '../server/index.js';
 import { launchBrowser, findChrome } from '../tools/cdp.mjs';
+import { createAppOnGoodPort, makeBoard, makeUser } from '../test/helpers.js';
+import { startMockGoogle } from '../test/google-mock.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, 'out');
@@ -24,8 +25,9 @@ function check(name, ok, detail = '') {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FORMATS = ['wall', 'grid', 'stream', 'shelf', 'rows', 'canvas', 'backchannel'];
 
-const dataDir = mkdtempSync(join(tmpdir(), 'edulet-e2e-'));
-const app = await createApp({ dataDir, port: 0, seed: true });
+// (a port that Chrome refuses — ERR_UNSAFE_PORT — is re-rolled with a fresh data folder; see test/helpers.js)
+const app = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e-')), port: 0, seed: true }));
+const dataDir = app.app.config.dataDir;
 const base = app.url.replace(/\/$/, '');
 const browser = await launchBrowser({ width: 1280, height: 860 });
 
@@ -224,8 +226,8 @@ try {
   });
 
   await step('S6b', async () => {
-    const dir2 = mkdtempSync(join(tmpdir(), 'edulet-e2e2-'));
-    const app2 = await createApp({ dataDir: dir2, port: 0, seed: true, pingMs: 3600000 }); // this server never pings
+    const app2 = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e2-')), port: 0, seed: true, pingMs: 3600000 })); // this server never pings
+    const dir2 = app2.app.config.dataDir;
     const base2 = app2.url.replace(/\/$/, '');
     try {
       const ctx = await browser.newContext();
@@ -306,6 +308,135 @@ try {
     await B.waitFor(`document.querySelector('[data-post-id="${post.id}"] [data-reaction="like"]').getAttribute('aria-pressed') === 'true'`, { timeout: 6000 });
     check('S6 같은 사용자의 다른 탭에도 내가 누른 좋아요가 표시됨', true);
     await O.ctx.close();
+  });
+
+  /* ── S7 Google sign-in against a stand-in Google (test/google-mock.js): the real browser walks the real redirect chain ── */
+  await step('S7', async () => {
+    const mock = await startMockGoogle();
+    const appG = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e-g-')), port: 0, host: '127.0.0.1', seed: false, quiet: true, config: mock.config(), googleEndpoints: mock.endpoints() }));
+    const dirG = appG.app.config.dataDir;
+    const baseG = appG.url.replace(/\/$/, '');
+    const menu = async (page, label) => {
+      await page.click('[aria-label="사용자 메뉴"]');
+      await page.waitFor(`[...document.querySelectorAll('.popover .menu-item')].some(b => b.innerText.includes(${JSON.stringify(label)}))`);
+      await page.eval(`[...document.querySelectorAll('.popover .menu-item')].find(b => b.innerText.includes(${JSON.stringify(label)})).click(); 1`);
+    };
+    const seeToast = async (page, re) => {
+      await page.waitFor(`[...document.querySelectorAll('.toast')].some(t => ${re}.test(t.innerText))`, { timeout: 8000 });
+      return true;
+    };
+    try {
+      const owner = makeUser(appG, 'owner');
+      const board = await makeBoard(owner, { title: '구글 로그인 보드', linkAccess: 'write' });
+
+      // a visitor on a board page opens the login dialog
+      const ctx = await browser.newContext();
+      const page = await ctx.newPage(baseG + '/b/' + board.slug);
+      await page.waitFor('.app-uc-login', { timeout: 15000 });
+      await page.click('.app-uc-login');
+      await page.waitFor('[data-role="auth"] [data-role="google-login"]');
+      check('S7 로그인 창에 "Google 계정으로 계속하기" 버튼이 있고 아이디 칸도 그대로 있음', (await page.count('[data-role="auth"] input[name=username]')) === 1);
+      check('S7 도메인 제한이 없으면 안내 문구 없음', (await page.count('.app-google-hint')) === 0);
+      await page.screenshot(join(OUT, 's7-login-modal.png'));
+
+      // first sign-in: Google → callback → back on the SAME board page, signed in, told so
+      await page.click('[data-role="google-login"]');
+      await page.waitFor(`!!document.querySelector('.app-uc-name') && document.querySelector('.app-uc-name').innerText.includes('김하나')`, { timeout: 15000 });
+      check('S7 Google 로 가입하고 원래 보드 주소로 돌아옴', (await page.eval('location.pathname')) === '/b/' + board.slug, await page.eval('location.href'));
+      check('S7 "가입했어요" 알림', await seeToast(page, '/가입했어요/'));
+      check('S7 알림용 쿠키는 읽고 지움', !(await page.eval('document.cookie')).includes('edulet_flash'));
+      const me = (await call(page, 'GET', '/auth/me')).body.user;
+      check('S7 계정: 비밀번호 없음·@g- 아이디·Google 이메일', me.hasPassword === false && /^g-[0-9a-f]{12}$/.test(me.username) && me.googleEmail === 'hana@example.com', JSON.stringify(me));
+      await page.screenshot(join(OUT, 's7-signed-in.png'));
+      await page.reload();
+      await page.waitFor('.app-uc-name');
+      check('S7 새로고침해도 로그인 유지', (await page.text('.app-uc-name')).includes('김하나'));
+      const wrote = await call(page, 'POST', `/boards/${board.slug}/posts`, { title: '구글 사용자의 글' });
+      check('S7 그 세션으로 글쓰기', wrote.status === 201, JSON.stringify(wrote));
+
+      // profile: shows the linked Google account, no password form
+      await menu(page, '프로필');
+      await page.waitFor('[data-role="google-linked"]');
+      check('S7 프로필에 연결된 Google 이메일, 비밀번호 칸은 없음', (await page.text('[data-role="google-linked"]')).includes('hana@example.com') && (await page.count('.app-profile .app-details')) === 0);
+      await page.screenshot(join(OUT, 's7-profile.png'));
+      await page.key('Escape');
+      await page.waitFor(`!document.querySelector('.app-profile')`);
+
+      // sign out, then Google again → the same account
+      await menu(page, '로그아웃');
+      await page.waitFor('.app-uc-login');
+      await page.click('.app-uc-login');
+      await page.click('[data-role="google-login"]');
+      await page.waitFor(`!!document.querySelector('.app-uc-name')`, { timeout: 15000 });
+      check('S7 다시 Google 로그인하면 같은 계정(어서 오세요)', await seeToast(page, '/어서 오세요/') && (await call(page, 'GET', '/auth/me')).body.user.id === me.id);
+      check('S7 콘솔 오류 없음(CSP 위반 포함)', page.errors.length === 0, page.errors.slice(0, 3).join(' | '));
+      await ctx.close();
+
+      // cancel on Google's page
+      mock.reset();
+      mock.deny = true;
+      const c2 = await browser.newContext();
+      const p2 = await c2.newPage(baseG + '/b/' + board.slug);
+      await p2.waitFor('.app-uc-login', { timeout: 15000 });
+      await p2.click('.app-uc-login');
+      await p2.waitFor('[data-role="google-login"]');
+      await p2.click('[data-role="google-login"]');
+      await p2.waitFor(`[...document.querySelectorAll('.toast')].some(t => /취소/.test(t.innerText))`, { timeout: 15000 });
+      check('S7 Google 에서 취소하면 안내만 나오고 로그인되지 않음', (await p2.count('.app-uc-login')) === 1 && (await p2.eval('location.pathname')) === '/b/' + board.slug);
+      await c2.close();
+
+      // an existing password account links Google from the profile dialog
+      mock.reset();
+      mock.profile = { ...mock.profile, email: 'linker@example.com', name: '연결할 사람' };
+      const c3 = await browser.newContext();
+      const p3 = await c3.newPage(baseG + '/');
+      const reg = await call(p3, 'POST', '/auth/register', { username: 'linker2026', password: 'password-1234', displayName: '연결' });
+      if (reg.status !== 201) throw new Error('register failed ' + JSON.stringify(reg));
+      await p3.goto(baseG + '/dashboard');
+      await p3.waitFor('[aria-label="사용자 메뉴"]', { timeout: 10000 });
+      await menu(p3, '프로필');
+      await p3.waitFor('[data-role="google-link-box"]');
+      check('S7 비밀번호 계정의 프로필에는 "Google 계정 연결하기"(접힘)와 비밀번호 바꾸기가 함께 있음', (await p3.count('.app-profile .app-details')) === 2 && !(await p3.eval(`document.querySelector('[data-role="google-link-box"]').open`)));
+      await p3.eval(`document.querySelector('[data-role="google-link-box"]').open = true; 1`);
+      // wrong password: stays here, says why, nothing was sent to Google
+      await p3.type('[name=googlePassword]', 'not-my-password');
+      await p3.click('[data-role="google-link"]');
+      await p3.waitFor(`document.querySelector('.app-profile .form-error') && document.querySelector('.app-profile .form-error').innerText.trim().length > 0`, { timeout: 8000 });
+      check('S7 틀린 비밀번호로는 연결이 시작되지 않고 이유가 보임', (await p3.eval('location.pathname')) === '/dashboard' && (await p3.count('[data-role="google-link"]')) === 1 && mock.authCalls.length === 0, 'authCalls=' + mock.authCalls.length + ' path=' + (await p3.eval('location.pathname')) + ' btn=' + (await p3.count('[data-role="google-link"]')) + ' err=' + (await p3.text('.app-profile .form-error')));
+      await p3.type('[name=googlePassword]', 'password-1234', { clear: true });
+      await p3.click('[data-role="google-link"]');
+      await p3.waitFor(`[...document.querySelectorAll('.toast')].some(t => /연결했어요/.test(t.innerText))`, { timeout: 15000 });
+      check('S7 연결 뒤 같은 페이지(/dashboard)로 돌아오고 계정은 그대로', (await p3.eval('location.pathname')) === '/dashboard' && (await call(p3, 'GET', '/auth/me')).body.user.username === 'linker2026');
+      await menu(p3, '프로필');
+      await p3.waitFor('[data-role="google-linked"]');
+      check('S7 연결된 Google 이메일이 프로필에 보임(비밀번호 바꾸기·연결 해제 상자도 있음)', (await p3.text('[data-role="google-linked"]')).includes('linker@example.com') && (await p3.count('.app-profile .app-details')) === 2 && (await p3.count('[data-role="google-unlink-box"]')) === 1);
+
+      // unlink: password again, then the profile redraws as "not linked"
+      await p3.waitFor(`!document.querySelector('.toast')`, { timeout: 8000 }); // a toast at the bottom would swallow the mouse click on the button below it
+      await p3.eval(`document.querySelector('[data-role="google-unlink-box"]').open = true; 1`);
+      await p3.type('[name=googlePassword]', 'password-1234');
+      await p3.click('[data-role="google-unlink"]');
+      await p3.waitFor('[data-role="google-link-box"]', { timeout: 8000 }).catch(async (e) => {
+        throw new Error(`${e.message} — form-error: "${await p3.text('.app-profile .form-error')}", toasts: "${await p3.eval(`[...document.querySelectorAll('.toast')].map(t => t.innerText).join('|')`)}", linked row: ${await p3.count('[data-role="google-linked"]')}`);
+      });
+      await p3.waitFor(`!document.querySelector('[data-role="google-linked"]')`, { timeout: 4000 }); // the old dialog is fading out
+      check('S7 연결 해제 뒤 프로필이 "연결 안 됨" 모양으로 다시 그려짐', (await p3.count('[data-role="google-linked"]')) === 0 && (await call(p3, 'GET', '/auth/me')).body.user.googleEmail === null);
+      await c3.close();
+
+      // the same Google account no longer opens linker2026: it makes a NEW account
+      const c4 = await browser.newContext();
+      const p4 = await c4.newPage(baseG + '/');
+      await p4.waitFor('.app-uc-login', { timeout: 15000 });
+      await p4.click('.app-uc-login');
+      await p4.click('[data-role="google-login"]');
+      await p4.waitFor(`!!document.querySelector('.app-uc-name')`, { timeout: 15000 });
+      check('S7 해제한 Google 계정은 옛 계정이 아니라 새 계정으로 가입됨', await seeToast(p4, '/가입했어요/') && (await call(p4, 'GET', '/auth/me')).body.user.username !== 'linker2026');
+      await c4.close();
+    } finally {
+      await appG.close();
+      await mock.close();
+      try { rmSync(dirG, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
   });
 } finally {
   await browser.close();

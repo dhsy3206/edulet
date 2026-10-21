@@ -26,7 +26,9 @@ describe('auth', () => {
     const c = new Client(app);
     const r = await c.post('/api/auth/register', { username: 'Alice_01', password: 'correct horse', displayName: '앨리스' });
     assert.equal(r.status, 201);
-    assert.deepEqual(Object.keys(r.json.user).sort(), ['avatarColor', 'displayName', 'id', 'isGuest', 'username']);
+    assert.deepEqual(Object.keys(r.json.user).sort(), ['avatarColor', 'displayName', 'googleEmail', 'hasPassword', 'id', 'isGuest', 'username']);
+    assert.equal(r.json.user.hasPassword, true);
+    assert.equal(r.json.user.googleEmail, null);
     assert.equal(r.json.user.username, 'alice_01', 'username is lower-cased');
     assert.equal(r.json.user.displayName, '앨리스');
     assert.equal(r.json.user.isGuest, false);

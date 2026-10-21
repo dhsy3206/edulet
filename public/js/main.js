@@ -6,6 +6,7 @@ import { homePage } from './views/home.js';
 import { dashboardPage } from './views/dashboard.js';
 import { boardPage } from './views/board-page.js';
 import { notFoundPage } from './views/not-found.js';
+import { showAuthFlash } from './views/auth.js';
 import { installAvatarContrast } from './board/tone.js';
 import { errorMessage } from './board/util.js';
 
@@ -48,6 +49,7 @@ async function boot() {
   onNotFound(() => notFoundPage(app));
 
   router.start();
+  showAuthFlash(); // the outcome of a Google sign-in that just redirected back here
 }
 
 boot().catch((e) => {

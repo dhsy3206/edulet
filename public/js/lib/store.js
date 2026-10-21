@@ -91,6 +91,19 @@ export const store = {
     announce();
     return r.user;
   },
+  /** Link a Google account to this (password) account: the server re-checks the password and answers with Google's address to go to. */
+  async googleLink(currentPassword, next) {
+    const r = await api.post('/auth/google/link', { currentPassword, next });
+    return r.url;
+  },
+  /** Detach the Google account again (password re-checked by the server). */
+  async googleUnlink(currentPassword) {
+    const r = await api.post('/auth/google/unlink', { currentPassword });
+    this.set('me', r.user);
+    return r.user;
+  },
+  /** Tell the other tabs of this browser that the session changed (a sign-in that arrived as a page redirect, e.g. Google). */
+  broadcastMe: announce,
   async logout() {
     try {
       await api.post('/auth/logout');

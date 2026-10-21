@@ -46,6 +46,22 @@
 .app-tab.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow-1); }
 .app-auth-submit { width: 100%; margin-top: 4px; }
 .app-auth-switch { text-align: center; margin: 14px 0 8px; font-size: 14px; color: var(--text-2); }
+/* Sign in with Google — white button, thin grey stroke, the unmodified "G" (Google's button guidelines) */
+.app-google { margin-bottom: 14px; }
+.app-google-btn { width: 100%; gap: 10px; background: #fff; color: #1f1f1f; border: 1px solid #747775; font-weight: 600; }
+.app-google-btn:hover { background: #f8f9fa; }
+.app-google-btn:focus-visible { outline: 3px solid var(--brand); outline-offset: 2px; }
+.app-google-btn .app-google-g { flex: none; }
+.app-google-hint { margin: 6px 0 0; text-align: center; }
+.app-divider { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--text-2); font-size: 13px; }
+.app-divider::before, .app-divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+.app-google-who { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; overflow-wrap: anywhere; }
+.app-google-who .app-google-g { flex: none; }
+.app-google-linked .hint { margin-top: 6px; }
+.app-profile .app-google-btn { width: auto; }
+.app-google-box .app-details { margin-top: 0; }
+.app-google-box .app-details .hint, .app-profile > .app-details .hint { display: block; margin-bottom: 10px; }
+.app-profile .app-details .btn { margin-bottom: 8px; }
 .app-profile-preview { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .app-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .app-swatch { width: 34px; height: 34px; border-radius: 50%; border: 3px solid transparent; display: grid; place-items: center; color: #fff; padding: 0; box-shadow: 0 0 0 1px rgb(15 23 42 / 0.15) inset; }

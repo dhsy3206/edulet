@@ -1,9 +1,10 @@
-// Auth UI: login/register modal, user menu control, profile modal.
+// Auth UI: login/register modal (with Sign in with Google), user menu control, profile modal.
 import { h } from '../lib/h.js';
 import { store } from '../lib/store.js';
 import { router } from '../lib/router.js';
 import { modal, popover, avatar, icon, toast } from '../lib/ui.js';
 import { LIMITS } from '../lib/constants.js';
+import { withBase, stripBase } from '../lib/base.js';
 import { isMember } from './common.js';
 
 export const AVATAR_COLORS = [
@@ -11,6 +12,67 @@ export const AVATAR_COLORS = [
   '#2563eb', '#4f46e5', '#9333ea', '#db2777', '#475569', '#78716c',
 ];
 const USERNAME_RE = /^[a-z0-9_.-]{3,30}$/;
+
+/* ───────── Google ───────── */
+const googleOn = () => !!(store.config && store.config.google);
+
+/** The server-side sign-in starts with a plain page navigation; Google sends the browser back to where it was (`next`). */
+export function googleStartUrl() {
+  return withBase('/api/auth/google/start') + '?' + new URLSearchParams({ next: stripBase(location.pathname) + location.search });
+}
+
+// Google's "G" (official multicolour mark, unmodified — see Google's sign-in branding guidelines)
+const googleMark = () => h.svg('svg', { class: 'app-google-g', viewBox: '0 0 48 48', width: 18, height: 18, 'aria-hidden': 'true', focusable: 'false' },
+  h.svg('path', { fill: '#EA4335', d: 'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z' }),
+  h.svg('path', { fill: '#4285F4', d: 'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z' }),
+  h.svg('path', { fill: '#FBBC05', d: 'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z' }),
+  h.svg('path', { fill: '#34A853', d: 'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z' }));
+
+/** The sign-in button of the login dialog (linking an existing account is a password-gated form in the profile dialog). */
+function googleButton(label) {
+  const btn = h('button', {
+    type: 'button', class: 'btn btn-lg app-google-btn', dataset: { role: 'google-login' },
+    onClick: () => {
+      btn.disabled = true;
+      btn.querySelector('span').textContent = 'Google 로 이동하는 중…';
+      location.assign(googleStartUrl());
+    },
+  }, googleMark(), h('span', null, label));
+  return btn;
+}
+
+const GOOGLE_NOTES = {
+  google_ok: ['success', (me) => `${me ? me.displayName + '님, ' : ''}어서 오세요.`],
+  google_new: ['success', (me) => `가입했어요. 환영해요${me ? ', ' + me.displayName + '님' : ''}!`],
+  google_linked: ['success', () => 'Google 계정을 연결했어요. 이제 Google 로도 로그인할 수 있어요.'],
+  google_denied: ['info', () => 'Google 로그인을 취소했어요.'],
+  google_state: ['error', () => '로그인 시간이 지났거나 요청이 맞지 않아요. 다시 시도해 주세요.'],
+  google_failed: ['error', () => 'Google 로그인을 마치지 못했어요. 잠시 뒤에 다시 시도해 주세요.'],
+  google_domain: ['error', () => '이 서버는 허용된 학교·기관의 Google 계정만 쓸 수 있어요. 다른 계정으로 다시 해 보세요.'],
+  google_unverified: ['error', () => '이메일 확인이 끝나지 않은 Google 계정이라 쓸 수 없어요.'],
+  google_disabled: ['error', () => '이 서버에서는 Google 로그인을 쓸 수 없어요.'],
+  google_register_closed: ['error', () => '지금은 새 가입을 받지 않아요. 이미 Google 로 가입한 계정만 로그인할 수 있어요.'],
+  google_taken: ['error', () => '이미 다른 계정에 연결된 Google 계정이에요.'],
+  google_already_linked: ['info', () => '이미 Google 계정이 연결되어 있어요.'],
+  google_need_login: ['error', () => '먼저 로그인한 뒤에 Google 계정을 연결할 수 있어요.'],
+  google_rate: ['error', () => '시도가 너무 많아요. 잠시 뒤에 다시 해 주세요.'],
+};
+
+/** Google sign-in ends with a redirect + a one-minute `edulet_flash` cookie (the server's answer in a word): say it, once. */
+export function showAuthFlash() {
+  let code = '';
+  try {
+    const m = /(?:^|;\s*)edulet_flash=([a-z_]{1,40})(?:;|$)/.exec(document.cookie);
+    code = m ? m[1] : '';
+    if (code) document.cookie = 'edulet_flash=; Path=/; Max-Age=0; SameSite=Lax';
+  } catch {
+    return;
+  }
+  if (!code.startsWith('google_')) return;
+  const [kind, text] = GOOGLE_NOTES[code] || ['error', () => 'Google 로그인을 마치지 못했어요. 다시 시도해 주세요.'];
+  if (kind === 'success') store.broadcastMe(); // other tabs of this browser learn about the new session too
+  toast(text(store.me), kind, kind === 'error' ? 6000 : 3500);
+}
 
 /** Resolve with the signed-in user (or null if the dialog was dismissed). */
 export function requireLogin({ message, tab = 'login' } = {}) {
@@ -51,8 +113,14 @@ export function openAuthModal({ tab = 'login', message = '' } = {}) {
         }, t === 'login' ? '로그인' : '가입하기'))))
       : null;
 
+    const domains = (store.config && store.config.googleDomains) || [];
+    const googleBlock = googleOn() ? h('div', { class: 'app-google' },
+      googleButton('Google 계정으로 계속하기'),
+      domains.length ? h('p', { class: 'hint app-google-hint' }, `${domains.map((d) => '@' + d).join(', ')} 계정만 쓸 수 있어요.`) : null,
+      h('div', { class: 'app-divider', role: 'separator' }, h('span', null, '또는 아이디로'))) : null;
+
     const form = h('form', { class: 'app-auth', novalidate: true, onSubmit: submit },
-      tabs, message ? h('p', { class: 'modal-text' }, message) : null, nameField, userField, passField, err, submitBtn, canRegister ? switchLine : null);
+      tabs, message ? h('p', { class: 'modal-text' }, message) : null, googleBlock, nameField, userField, passField, err, submitBtn, canRegister ? switchLine : null);
 
     const m = modal({ title: '로그인', size: 'sm', body: form, onClose: () => { if (!settled) resolve(null); } });
     m.el.dataset.role = 'auth';
@@ -162,16 +230,72 @@ export function openProfileModal() {
   paintSwatches();
   paintPreview();
 
-  const pwBox = me.isGuest ? null : h('details', { class: 'app-details' },
+  // `hasPassword` is absent in older servers: only a definite "no" (a Google-only account) hides the form
+  const noPassword = me.hasPassword === false;
+  const pwBox = me.isGuest || noPassword ? null : h('details', { class: 'app-details' },
     h('summary', null, '비밀번호 바꾸기'),
     h('label', { class: 'field' }, h('span', { class: 'label' }, '현재 비밀번호'), curPw),
     h('label', { class: 'field' }, h('span', { class: 'label' }, '새 비밀번호'), newPw, h('span', { class: 'hint' }, '8자 이상')));
+
+  // Linking / unlinking Google asks for the password again (the server enforces it): a stolen session must not be able to
+  // plant its own Google account as a second way into this one. Neither password is ever part of save()'s patch.
+  let m = null; // the profile dialog itself, for the unlink handler below
+  const googlePw = h('input', { class: 'input', type: 'password', name: 'googlePassword', autocomplete: 'current-password' });
+  const googlePwField = h('label', { class: 'field' }, h('span', { class: 'label' }, '현재 비밀번호'), googlePw);
+  googlePw.addEventListener('input', () => { err.textContent = ''; });
+
+  async function linkGoogle(btn) {
+    err.textContent = '';
+    if (!googlePw.value) { err.textContent = '현재 비밀번호를 입력해 주세요.'; googlePw.focus(); return; }
+    btn.disabled = true;
+    try {
+      location.assign(await store.googleLink(googlePw.value, stripBase(location.pathname) + location.search));
+    } catch (e) {
+      err.textContent = e.message || 'Google 연결을 시작하지 못했어요. 다시 시도해 주세요.';
+      btn.disabled = false;
+    }
+  }
+  async function unlinkGoogle(btn) {
+    err.textContent = '';
+    if (!googlePw.value) { err.textContent = '현재 비밀번호를 입력해 주세요.'; googlePw.focus(); return; }
+    btn.disabled = true;
+    try {
+      await store.googleUnlink(googlePw.value);
+      toast('Google 연결을 풀었어요.', 'success');
+      m.close();
+      openProfileModal(); // redraw from the new state
+    } catch (e) {
+      err.textContent = e.message || 'Google 연결을 풀지 못했어요. 다시 시도해 주세요.';
+      btn.disabled = false;
+    }
+  }
+
+  let googleBox = null;
+  if (me.googleEmail) {
+    const unlinkBtn = h('button', { type: 'button', class: 'btn btn-sm btn-secondary', dataset: { role: 'google-unlink' }, onClick: () => unlinkGoogle(unlinkBtn) }, 'Google 연결 해제');
+    googleBox = h('div', { class: 'app-google-box' },
+      h('div', { class: 'field app-google-linked', dataset: { role: 'google-linked' } },
+        h('span', { class: 'label' }, 'Google 계정'),
+        h('span', { class: 'app-google-who' }, googleMark(), h('span', null, me.googleEmail)),
+        noPassword ? h('span', { class: 'hint' }, `Google 로 로그인하는 계정이라 비밀번호가 없어요. 보드에 초대받을 때는 아이디 @${me.username} 를 알려 주세요.`) : null),
+      noPassword ? null : h('details', { class: 'app-details', dataset: { role: 'google-unlink-box' } },
+        h('summary', null, 'Google 연결 해제'),
+        h('span', { class: 'hint' }, '해제하면 이 계정에는 아이디와 비밀번호로만 들어올 수 있어요.'),
+        googlePwField, unlinkBtn));
+  } else if (!me.isGuest && !noPassword && googleOn()) {
+    const linkBtn = h('button', { type: 'button', class: 'btn app-google-btn', dataset: { role: 'google-link' }, onClick: () => linkGoogle(linkBtn) },
+      googleMark(), h('span', null, 'Google 계정 연결하기'));
+    googleBox = h('details', { class: 'app-details', dataset: { role: 'google-link-box' } },
+      h('summary', null, 'Google 계정 연결하기'),
+      h('span', { class: 'hint' }, '연결하면 Google 로도 이 계정에 로그인할 수 있어요. 보안을 위해 현재 비밀번호를 한 번 더 확인해요. 지금 입력 중인 변경 사항은 저장되지 않아요.'),
+      googlePwField, linkBtn);
+  }
 
   const body = h('form', { class: 'app-profile', onSubmit: (e) => e.preventDefault() },
     preview,
     h('label', { class: 'field' }, h('span', { class: 'label' }, '표시 이름'), nameInput),
     h('div', { class: 'field' }, h('span', { class: 'label' }, '프로필 색'), swatches),
-    pwBox, err);
+    googleBox, pwBox, err);
 
   async function save() {
     err.textContent = '';
@@ -197,13 +321,14 @@ export function openProfileModal() {
     }
   }
 
-  return modal({
+  m = modal({
     title: me.isGuest ? '내 이름' : '프로필', size: 'sm', body,
     actions: [
       { label: '취소', kind: 'secondary' },
       { label: '저장', kind: 'primary', keepOpen: true, onClick: async (close) => { if (await save()) close(); } },
     ],
   });
+  return m;
 }
 
 /* ───────── user control (top bar) ───────── */

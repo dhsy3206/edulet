@@ -1,4 +1,4 @@
-// Accounts, sessions, scrypt password hashing. CONTRACT §5 "인증".
+// Accounts, sessions, scrypt password hashing. CONTRACT §5 "인증". (Sign in with Google lives in google.js.)
 import crypto from 'node:crypto';
 import { AVATAR_COLORS, LIMITS } from './constants.js';
 import { bad, forbidden, HttpError, parseCookies, clientIp, unauthorized } from './http.js';
@@ -44,17 +44,22 @@ export function createSession(app, userId) {
   return { token, expiresAt };
 }
 
-function cookieSecure(app, req) {
+export function cookieSecure(app, req) {
   const mode = app.config.cookieSecure;
   if (mode === '1' || mode === 'true' || mode === 'on') return true;
   if (mode === '0' || mode === 'false' || mode === 'off') return false;
+  if (/^https:/i.test(String(app.config.publicUrl || ''))) return true; // the address people are told to use is https
   return !!app.config.trustProxy && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
 }
 
-function setSessionCookie(app, c, token) {
+/** The Set-Cookie line that starts a session (also used by the Google callback, which sets several cookies at once). */
+export function sessionCookie(app, req, token) {
   const maxAge = app.config.sessionDays * 86400;
-  const secure = cookieSecure(app, c.req) ? '; Secure' : '';
-  c.res.setHeader('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`);
+  const secure = cookieSecure(app, req) ? '; Secure' : '';
+  return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
+}
+function setSessionCookie(app, c, token) {
+  c.res.setHeader('Set-Cookie', sessionCookie(app, c.req, token));
 }
 function clearSessionCookie(app, c) {
   const secure = cookieSecure(app, c.req) ? '; Secure' : '';
@@ -119,7 +124,26 @@ function needPassword(v) {
   return v;
 }
 
-const publicUser = (row) => userJson(row);
+/** The user as they see themself: `hasPassword` / `googleEmail` are never sent to anyone else (userJson is what others get). */
+export const publicUser = (row) => ({ ...userJson(row), hasPassword: !!row.password_hash, googleEmail: row.google_email ?? null });
+
+/**
+ * Re-check the signed-in user's password before something that would outlive their session — a password change, or linking /
+ * unlinking a Google account (a stolen session must not be able to plant a second way in). Shares the per-IP auth budget and the
+ * per-account failure counter of the password change, so guessing here is throttled like everywhere else.
+ */
+export async function confirmPassword(app, c, given) {
+  limitAuth(app, c);
+  const fk = failKey('pwfail', c.user.id);
+  checkFailures(app, fk);
+  // The guess is charged BEFORE the (slow) hash runs and the charge is wiped on success: otherwise N guesses in flight at the same
+  // moment would all pass the check above and only be counted afterwards.
+  recordFailure(app, fk);
+  if (typeof given !== 'string' || !(await verifyPassword(given.slice(0, LIMITS.passwordMax), c.user.password_hash))) {
+    throw new HttpError(401, 'bad_credentials', '현재 비밀번호가 맞지 않아요.');
+  }
+  app.rate.clear(fk);
+}
 
 export function registerAuth(app) {
   const { db, router } = app;
@@ -218,14 +242,7 @@ export function registerAuth(app) {
     if (b.newPassword !== undefined) {
       if (c.user.is_guest || !c.user.password_hash) throw forbidden('이 계정은 비밀번호를 바꿀 수 없어요.');
       needPassword(b.newPassword);
-      limitAuth(app, c);
-      const fk = failKey('pwfail', c.user.id);
-      checkFailures(app, fk);
-      if (typeof b.currentPassword !== 'string' || !(await verifyPassword(b.currentPassword.slice(0, LIMITS.passwordMax), c.user.password_hash))) {
-        recordFailure(app, fk);
-        throw new HttpError(401, 'bad_credentials', '현재 비밀번호가 맞지 않아요.');
-      }
-      app.rate.clear(fk);
+      await confirmPassword(app, c, b.currentPassword);
       newHash = await hashPassword(b.newPassword);
       sets.push('password_hash = ?'); vals.push(newHash);
     }
