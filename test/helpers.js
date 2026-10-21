@@ -201,3 +201,34 @@ export function parseCsv(text) {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * An upload that can be held open: the first chunk is sent immediately, the rest only when `finish()` is called (or never).
+ * `result` resolves to { status, json, text, headers } (or { error } when the connection was cut).
+ */
+export function slowUpload(running, client, slug, { name = 'slow.bin', first = Buffer.alloc(16, 1), type = 'application/octet-stream' } = {}) {
+  let done;
+  const result = new Promise((resolve) => { done = resolve; });
+  const req = http.request(`${running.url}/api/uploads?board=${slug}&name=${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { cookie: client.cookie, 'content-type': type, 'transfer-encoding': 'chunked' },
+  }, (res) => {
+    const parts = [];
+    res.on('data', (d) => parts.push(d));
+    res.on('end', () => {
+      const text = Buffer.concat(parts).toString('utf8');
+      let json;
+      try { json = JSON.parse(text); } catch { /* not json */ }
+      done({ status: res.statusCode, json, text, headers: res.headers });
+    });
+  });
+  req.on('error', (error) => done({ error }));
+  req.write(first);
+  return {
+    req,
+    result,
+    /** send `rest` (optional) and end the body */
+    finish(rest) { if (rest) req.write(rest); req.end(); return result; },
+    abort() { req.destroy(); },
+  };
+}

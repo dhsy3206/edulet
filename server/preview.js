@@ -5,10 +5,13 @@ import dns from 'node:dns';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { HttpError, bad } from './http.js';
+import { HttpError, RateLimiter, bad } from './http.js';
 import { normalizeUrl } from './util.js';
 
 const MAX_BODY = 512 * 1024;
+const PARSE_LIMIT = 128 * 1024; // only the head of the page is parsed (CONTRACT §5)
+const MAX_TAG_LEN = 4096; // longest <meta>/<title> open tag we look at
+const MAX_TAG_CANDIDATES = 1000; // <meta>/<title> openers examined per page
 const MAX_REDIRECTS = 3;
 const CACHE_MS = 10 * 60 * 1000;
 const CACHE_MAX = 500;
@@ -71,7 +74,8 @@ export function isBlockedIp(ip) {
     if (!g) return true;
     const v4 = (hi, lo) => blockedV4([hi >> 8, hi & 255, lo >> 8, lo & 255]);
     if (g.slice(0, 6).every((x) => x === 0)) return true; // ::, ::1, ::a.b.c.d (IPv4-compatible)
-    if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4(g[6], g[7]); // ::ffff:a.b.c.d
+    if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4(g[6], g[7]); // ::ffff:a.b.c.d (IPv4-mapped)
+    if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) return v4(g[6], g[7]); // ::ffff:0:a.b.c.d (SIIT)
     if (g[0] === 0x64 && g[1] === 0xff9b) return g.slice(2, 6).every((x) => x === 0) ? v4(g[6], g[7]) : true; // NAT64
     if ((g[0] & 0xfe00) === 0xfc00) return true; // fc00::/7 ULA
     if ((g[0] & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
@@ -85,9 +89,21 @@ export function isBlockedIp(ip) {
   return true;
 }
 
+/**
+ * `dns: true` when the block came from what a host NAME resolved to (so the answer would reveal internal DNS data);
+ * those are reported exactly like an unreachable page. Blocks that depend only on the URL text (scheme, credentials,
+ * literal IPs, "localhost") stay a visible `blocked_url`.
+ */
 export class BlockedUrlError extends Error {
-  constructor(msg = 'blocked') { super(msg); this.code = 'ssrf_blocked'; }
+  constructor(msg = 'blocked', { dns = false } = {}) { super(msg); this.code = 'ssrf_blocked'; this.dns = dns; }
 }
+
+/** Thrown by PreviewService when a limit is hit; `scope` is 'user' | 'host' | 'busy'. */
+export class PreviewThrottledError extends Error {
+  constructor(scope) { super('preview throttled'); this.code = 'preview_throttled'; this.scope = scope; }
+}
+
+const isLocalName = (h) => h === 'localhost' || h.endsWith('.localhost');
 
 // ---- URL classification --------------------------------------------------------
 
@@ -126,10 +142,11 @@ function decodeEntities(s) {
     return ENTITIES[e.toLowerCase()] ?? m;
   });
 }
-const tidy = (s, max) => decodeEntities(String(s ?? '')).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+// slice BEFORE decoding: an entity can only shrink text, so max*8 chars of input always cover `max` chars of output
+const tidy = (s, max) => decodeEntities(String(s ?? '').slice(0, max * 8)).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
 
 function parseAttrs(tag) {
-  const out = {};
+  const out = Object.create(null);
   const re = /([^\s=/>"']+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
   let m;
   const body = tag.replace(/^<\w+/, '');
@@ -145,16 +162,65 @@ function absHttp(v, base) {
   } catch { return null; }
 }
 
-export function parseHtmlPreview(html, baseUrl) {
-  const metas = {};
-  for (const m of html.matchAll(/<meta\b[^>]*>/gi)) {
-    const a = parseAttrs(m[0]);
-    const key = (a.property || a.name || '').toLowerCase();
-    if (key && a.content != null && !(key in metas)) metas[key] = a.content;
+const isTagDelim = (ch) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f' || ch === '/' || ch === '>';
+
+/**
+ * Index just after the `>` closing the tag that starts at `start` (a `<`), or -1. Quotes only count after `=`; the scan
+ * never looks further than MAX_TAG_LEN characters, so a page full of unterminated tags costs O(tags x MAX_TAG_LEN).
+ */
+function tagEnd(s, start) {
+  const limit = Math.min(s.length, start + MAX_TAG_LEN);
+  let quote = '';
+  let prev = '';
+  for (let i = start + 1; i < limit; i++) {
+    const ch = s[i];
+    if (quote) {
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if ((ch === '"' || ch === "'") && prev === '=') quote = ch;
+    else if (ch === '>') return i + 1;
+    if (ch !== ' ' && ch !== '\t' && ch !== '\n' && ch !== '\r' && ch !== '\f') prev = ch;
   }
-  const t = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  // unbalanced quote: fall back to the first '>' inside the bound (what lenient parsers do)
+  const gt = s.indexOf('>', start + 1);
+  return gt >= 0 && gt < limit ? gt + 1 : -1;
+}
+
+/**
+ * Linear-time scan of the head of an HTML page (first PARSE_LIMIT characters, at most MAX_TAG_CANDIDATES <meta>/<title>
+ * openers, each bounded by MAX_TAG_LEN). No backtracking regexes over the whole page.
+ */
+export function parseHtmlPreview(html, baseUrl) {
+  const src = String(html).slice(0, PARSE_LIMIT);
+  const low = src.replace(/[A-Z]+/g, (m) => m.toLowerCase()); // ASCII-only lower-casing keeps indexes aligned
+  const metas = Object.create(null);
+  let titleRaw = null;
+  let pos = 0;
+  for (let seen = 0; seen < MAX_TAG_CANDIDATES;) {
+    const i = low.indexOf('<', pos);
+    if (i < 0) break;
+    pos = i + 1;
+    if (low.startsWith('meta', i + 1) && isTagDelim(low[i + 5])) {
+      seen++;
+      const end = tagEnd(src, i);
+      if (end < 0) continue;
+      const a = parseAttrs(src.slice(i, end));
+      const key = (a.property || a.name || '').toLowerCase();
+      if (key && a.content != null && !(key in metas)) metas[key] = a.content;
+      pos = end;
+    } else if (titleRaw === null && low.startsWith('title', i + 1) && isTagDelim(low[i + 6])) {
+      seen++;
+      const end = tagEnd(src, i);
+      if (end < 0) continue;
+      const close = low.indexOf('</title', end);
+      if (close < 0) { titleRaw = ''; continue; } // no closing tag anywhere: there is no title
+      titleRaw = src.slice(end, Math.min(close, end + 2000));
+      pos = close;
+    }
+  }
   return {
-    title: tidy(metas['og:title'] || metas['twitter:title'] || (t ? t[1] : ''), 200),
+    title: tidy(metas['og:title'] || metas['twitter:title'] || titleRaw || '', 200),
     description: tidy(metas['og:description'] || metas['twitter:description'] || metas.description || '', 300),
     image: absHttp(metas['og:image'] || metas['twitter:image'] || metas['twitter:image:src'], baseUrl),
     site: tidy(metas['og:site_name'] || '', 100),
@@ -169,15 +235,16 @@ function decodeBody(buf, contentType) {
 
 // ---- fetching --------------------------------------------------------------------
 
-function fetchOnce(u, { allowPrivate, signal }) {
+function fetchOnce(u, { allowPrivate, signal, dnsLookup = dns.lookup }) {
   return new Promise((resolve, reject) => {
     const host = u.hostname.replace(/^\[|\]$/g, '');
     if (net.isIP(host) && !allowPrivate && isBlockedIp(host)) return reject(new BlockedUrlError());
+    if (!allowPrivate && isLocalName(host.toLowerCase().replace(/\.$/, ''))) return reject(new BlockedUrlError('local name'));
     const lookup = (hostname, options, cb) => {
       if (typeof options === 'function') { cb = options; options = {}; }
-      dns.lookup(hostname, { all: true, verbatim: true }, (err, addrs) => {
+      dnsLookup(hostname, { all: true, verbatim: true }, (err, addrs) => {
         if (err) return cb(err);
-        if (!allowPrivate && addrs.some((a) => isBlockedIp(a.address))) return cb(new BlockedUrlError());
+        if (!allowPrivate && addrs.some((a) => isBlockedIp(a.address))) return cb(new BlockedUrlError('resolves to a private address', { dns: true }));
         if (options && options.all) return cb(null, addrs);
         return cb(null, addrs[0].address, addrs[0].family);
       });
@@ -237,19 +304,43 @@ function hostMatches(allow, u) {
   return allow.includes(`${host}:${port}`) || allow.includes(host);
 }
 
+/** The preview stored/returned when a page cannot (or must not) be fetched: just the URL as title. */
+export function barePreview(urlStr) {
+  const video = classifyVideo(urlStr);
+  const host = new URL(urlStr).hostname;
+  return {
+    url: urlStr, kind: video ? 'video' : 'link', title: urlStr, description: '', image: video?.image ?? null,
+    site: video?.site ?? host, ...(video ? { embedUrl: video.embedUrl } : {}),
+  };
+}
+
 export class PreviewService {
   /**
    * @param {object} o
    * @param {boolean} o.enabled  EDULET_LINK_PREVIEW
    * @param {true|string[]} [o.allowPrivate] TEST ONLY — never wired to env/HTTP. true = all, or ['host:port'].
    * @param {Function} [o.fetcher] TEST ONLY — replaces the network fetch: (urlString) => {status, headers, body}
+   * @param {Function} [o.dnsLookup] TEST ONLY — replaces dns.lookup in the pinned-connection hook.
+   * @param {number} [o.userPerMin] resolve() calls per user per minute (cache hits included)
+   * @param {number} [o.hostPerMin] outbound fetches per target host per minute (all users)
+   * @param {number} [o.maxInFlight] outbound fetches running at the same time
    */
-  constructor({ enabled = true, allowPrivate = false, fetcher = null, timeoutMs = 5000 } = {}) {
+  constructor({
+    enabled = true, allowPrivate = false, fetcher = null, timeoutMs = 5000, dnsLookup = dns.lookup,
+    userPerMin = 20, hostPerMin = 60, maxInFlight = 8,
+  } = {}) {
     this.enabled = enabled;
     this.allowPrivate = allowPrivate;
     this.fetcher = fetcher;
     this.timeoutMs = timeoutMs;
+    this.dnsLookup = dnsLookup;
+    this.userPerMin = userPerMin;
+    this.hostPerMin = hostPerMin;
+    this.maxInFlight = maxInFlight;
     this.cache = new Map();
+    this.rate = new RateLimiter();
+    this.inFlight = 0;
+    this.pending = new Map(); // url -> Promise: concurrent requests for one URL share a single fetch
   }
 
   /** Fetch (following checked redirects) -> {status, headers, body, finalUrl}. Throws BlockedUrlError for SSRF. */
@@ -264,7 +355,7 @@ export class PreviewService {
         const allow = hostMatches(this.allowPrivate, current);
         const r = this.fetcher
           ? await this.fetcher(current.href)
-          : await fetchOnce(current, { allowPrivate: allow, signal: ctl.signal });
+          : await fetchOnce(current, { allowPrivate: allow, signal: ctl.signal, dnsLookup: this.dnsLookup });
         if (r.redirect) {
           if (hop === MAX_REDIRECTS) throw new Error('too many redirects');
           try { current = new URL(r.redirect, current); } catch { throw new BlockedUrlError('bad redirect'); }
@@ -280,10 +371,15 @@ export class PreviewService {
 
   /**
    * Resolve a preview for an already-normalised http(s) URL.
+   * Every caller (the /link-preview endpoint AND post create/patch) goes through here, so the limits cannot be bypassed:
+   *  - `userId`: at most `userPerMin` calls per user per minute        -> PreviewThrottledError('user')
+   *  - at most `hostPerMin` outbound fetches per target host per minute -> PreviewThrottledError('host')
+   *  - at most `maxInFlight` outbound fetches at once                   -> PreviewThrottledError('busy')
+   * Cached answers and fetches joined from a concurrent identical request cost no outbound budget.
    * @returns {Promise<{url, kind, title, description, image, site, embedUrl?}>}
-   * @throws BlockedUrlError when the target is not allowed to be fetched
+   * @throws BlockedUrlError when the target is not allowed to be fetched; PreviewThrottledError when a limit is hit
    */
-  async resolve(urlStr) {
+  async resolve(urlStr, { userId = null } = {}) {
     const u = new URL(urlStr);
     const host = u.hostname.replace(/^\[|\]$/g, '').replace(/^www\./, '');
     const video = classifyVideo(urlStr);
@@ -296,20 +392,37 @@ export class PreviewService {
       site: video?.site ?? host,
       ...(video ? { embedUrl: video.embedUrl } : {}),
     };
+    if (userId != null && !this.rate.hit('u:' + userId, this.userPerMin)) throw new PreviewThrottledError('user');
     if (!this.enabled) return base;
     const hit = this.cache.get(urlStr);
     if (hit && hit.at > Date.now() - CACHE_MS) return hit.value;
+    const joined = this.pending.get(urlStr);
+    if (joined) return joined;
+    if (!this.rate.hit('h:' + u.hostname.toLowerCase(), this.hostPerMin)) throw new PreviewThrottledError('host');
+    if (this.inFlight >= this.maxInFlight) throw new PreviewThrottledError('busy');
+    this.inFlight++;
+    const job = this.#fetchPreview(urlStr, host, video, base).finally(() => {
+      this.inFlight--;
+      this.pending.delete(urlStr);
+    });
+    this.pending.set(urlStr, job);
+    return job;
+  }
+
+  async #fetchPreview(urlStr, host, video, base) {
     let page;
     try {
       page = await this.fetchPage(urlStr);
     } catch (e) {
-      if (e instanceof BlockedUrlError || e?.code === 'ssrf_blocked') throw e;
-      return { ...base, title: urlStr }; // network failure: degrade, do not cache
+      // Blocks that depend only on the URL text stay visible; a name that RESOLVES to a private address looks exactly
+      // like an unreachable host (otherwise the answer would let anyone enumerate internal DNS names).
+      if ((e instanceof BlockedUrlError || e?.code === 'ssrf_blocked') && !e.dns) throw e;
+      return { ...base, title: urlStr }; // network failure / dns-blocked: degrade, do not cache
     }
     const ct = String(page.headers?.['content-type'] || '').toLowerCase();
     let value = { ...base, title: urlStr };
     if (page.status >= 200 && page.status < 300 && /^(text\/html|application\/xhtml\+xml)/.test(ct)) {
-      const p = parseHtmlPreview(decodeBody(page.body, ct), page.finalUrl);
+      const p = parseHtmlPreview(decodeBody(page.body.subarray(0, PARSE_LIMIT + 8), ct), page.finalUrl);
       value = {
         ...base,
         title: p.title || host,
@@ -325,17 +438,12 @@ export class PreviewService {
     return value;
   }
 
-  /** Never throws: SSRF-blocked or failing targets yield a bare preview (used when saving posts). */
-  async safeResolve(urlStr) {
+  /** Never throws: blocked, throttled or failing targets yield a bare preview (used when saving posts). */
+  async safeResolve(urlStr, opts) {
     try {
-      return await this.resolve(urlStr);
+      return await this.resolve(urlStr, opts);
     } catch {
-      const video = classifyVideo(urlStr);
-      const host = new URL(urlStr).hostname;
-      return {
-        url: urlStr, kind: video ? 'video' : 'link', title: urlStr, description: '', image: video?.image ?? null,
-        site: video?.site ?? host, ...(video ? { embedUrl: video.embedUrl } : {}),
-      };
+      return barePreview(urlStr);
     }
   }
 }
@@ -343,14 +451,15 @@ export class PreviewService {
 export function registerPreview(app) {
   app.router.add('POST', '/link-preview', async (c) => {
     if (!c.user) throw new HttpError(401, 'unauthorized', '로그인이 필요해요.');
-    if (!app.rate.hit('lp:' + c.user.id, 20)) {
-      throw new HttpError(429, 'rate_limited', '잠시 뒤에 다시 해 주세요.', { 'Retry-After': '60' });
-    }
     const b = await c.body();
     const url = normalizeUrl(b.url);
     try {
-      return await app.preview.resolve(url);
+      return await app.preview.resolve(url, { userId: c.user.id });
     } catch (e) {
+      if (e instanceof PreviewThrottledError) {
+        if (e.scope === 'user') throw new HttpError(429, 'rate_limited', '잠시 뒤에 다시 해 주세요.', { 'Retry-After': '60' });
+        return barePreview(url); // target host / server busy: same bare preview as an unreachable page
+      }
       if (e instanceof BlockedUrlError || e?.code === 'ssrf_blocked') {
         throw bad('blocked_url', '이 주소는 미리보기를 가져올 수 없어요.');
       }
@@ -358,4 +467,3 @@ export function registerPreview(app) {
     }
   });
 }
-

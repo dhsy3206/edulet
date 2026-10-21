@@ -74,45 +74,82 @@ export function parseCookies(header) {
   return out;
 }
 
-/** Read the whole body up to `limit` bytes. Rejects with 413 (and discards the rest) when exceeded. */
-export function readBody(req, limit) {
+/**
+ * Stop buffering an oversized request body: keep reading (and discarding) a little longer so the client can still
+ * receive our 413, but never more than `limit + 8MB` / 1.5 s.
+ */
+export function discardBody(req, limit) {
+  req.removeAllListeners('data');
+  req.resume(); // a paused stream (backpressure) must flow again or the remainder is never read
+  let drained = 0;
+  req.on('data', (ch) => { drained += ch.length; if (drained > limit + 8 * 1024 * 1024) req.destroy(); });
+  const t = setTimeout(() => req.destroy(), 1500);
+  t.unref();
+  req.on('end', () => clearTimeout(t));
+  req.on('close', () => clearTimeout(t));
+}
+
+export const tooLargeError = () => new HttpError(413, 'too_large', '파일이 너무 커요.', { Connection: 'close' });
+
+/**
+ * Read the whole body up to `limit` bytes. Rejects with 413 (and discards the rest) when exceeded, and with 408 when the
+ * whole body has not arrived within `timeoutMs` (a stalled client must not keep an authorisation decision open forever).
+ */
+export function readBody(req, limit, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers['content-length']);
-    const tooLarge = () => {
-      req.removeAllListeners('data');
-      let drained = 0;
-      req.on('data', (ch) => { drained += ch.length; if (drained > limit + 8 * 1024 * 1024) req.destroy(); });
-      const t = setTimeout(() => req.destroy(), 1500);
-      t.unref();
-      req.on('end', () => clearTimeout(t));
-      reject(new HttpError(413, 'too_large', '파일이 너무 커요.', { Connection: 'close' }));
-    };
+    let timer = null;
+    let finished = false;
+    const settle = (fn, v) => { if (finished) return; finished = true; clearTimeout(timer); fn(v); };
+    const tooLarge = () => { discardBody(req, limit); settle(reject, tooLargeError()); };
     if (Number.isFinite(declared) && declared > limit) return tooLarge();
     const chunks = [];
     let size = 0;
-    let finished = false;
+    timer = setTimeout(() => {
+      if (finished) return;
+      discardBody(req, limit);
+      settle(reject, new HttpError(408, 'request_timeout', '요청을 받는 데 너무 오래 걸렸어요. 다시 해 주세요.', { Connection: 'close' }));
+    }, timeoutMs);
+    timer.unref();
     req.on('data', (ch) => {
       if (finished) return;
       size += ch.length;
-      if (size > limit) { finished = true; chunks.length = 0; tooLarge(); return; }
+      if (size > limit) { chunks.length = 0; tooLarge(); return; }
       chunks.push(ch);
     });
-    req.on('end', () => { if (!finished) { finished = true; resolve(Buffer.concat(chunks)); } });
-    req.on('error', (e) => { if (!finished) { finished = true; reject(e); } });
-    req.on('aborted', () => { if (!finished) { finished = true; reject(new HttpError(400, 'aborted', '요청이 중단됐어요.')); } });
+    req.on('end', () => settle(resolve, Buffer.concat(chunks)));
+    req.on('error', (e) => settle(reject, e));
+    req.on('aborted', () => settle(reject, new HttpError(400, 'aborted', '요청이 중단됐어요.')));
   });
 }
 
 export class RateLimiter {
-  constructor() { this.m = new Map(); }
+  constructor() { this.m = new Map(); this.sweptAt = 0; }
   /** @returns {boolean} true when the call is allowed */
   hit(key, limit, windowMs = 60000) {
     const t = Date.now();
     let e = this.m.get(key);
     if (!e || e.reset <= t) { e = { n: 0, reset: t + windowMs }; this.m.set(key, e); }
     e.n++;
-    if (this.m.size > 5000) for (const [k, v] of this.m) if (v.reset <= t) this.m.delete(k);
+    this.sweep(t);
     return e.n <= limit;
+  }
+  /** Hits recorded in the current window (0 when none). Does not count as a hit. */
+  count(key) {
+    const e = this.m.get(key);
+    return e && e.reset > Date.now() ? e.n : 0;
+  }
+  /** Milliseconds until the window of `key` ends (0 when there is none). */
+  retryAfterMs(key) {
+    const e = this.m.get(key);
+    return e && e.reset > Date.now() ? e.reset - Date.now() : 0;
+  }
+  clear(key) { this.m.delete(key); }
+  /** Drop expired windows. Runs at most once every 10 s (and only when the map is big), so hit() stays O(1) amortised. */
+  sweep(t = Date.now()) {
+    if (this.m.size <= 2000 || t - this.sweptAt < 10000) return;
+    this.sweptAt = t;
+    for (const [k, v] of this.m) if (v.reset <= t) this.m.delete(k);
   }
 }
 

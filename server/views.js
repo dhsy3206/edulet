@@ -1,5 +1,5 @@
 // JSON serializers (DB rows -> API shapes). See CONTRACT §5.
-import { DEFAULT_SETTINGS, REACTIONS } from './constants.js';
+import { DEFAULT_SETTINGS, REACTIONS, atLeast } from './constants.js';
 
 export function userJson(r, p = '') {
   return {
@@ -26,9 +26,43 @@ export function parseSettings(text) {
   return s;
 }
 
-export function boardJson(db, b) {
-  const owner = getUserRow(db, b.owner_id);
+// ---- who may see whom (CONTRACT §5 "User", §4 showAuthor) ---------------------------------------
+/** What a hidden author looks like to readers below `moderate` when `settings.showAuthor` is false. */
+export const ANON_AUTHOR = Object.freeze({ id: 0, username: null, displayName: '익명', avatarColor: '#94a3b8', isGuest: true });
+
+/** A viewer: `userId` (null = anonymous), `admin` (sees login names), `anonymize` (authors of other people are hidden). */
+export const PUBLIC_VIEW = Object.freeze({ userId: null, admin: false, anonymize: false });
+/** Unfiltered serialisation, used only for event payloads — the realtime hub shapes them again per connection. */
+export const FULL_VIEW = Object.freeze({ userId: null, admin: true, anonymize: false });
+
+export function viewerFor(board, role, userId) {
+  const settings = parseSettings(board.settings);
   return {
+    userId: userId ?? null,
+    admin: atLeast(role, 'admin'),
+    anonymize: settings.showAuthor === false && !atLeast(role, 'moderate'),
+  };
+}
+
+/** Any user object that is not a post/comment author (the board owner): login name only for admins and the user themself. */
+export function shapeUser(u, v) {
+  if (!u || u.username == null || v.admin || u.id === v.userId) return u;
+  return { ...u, username: null };
+}
+
+/** Post/comment author: one's own items stay real; others are anonymised or just lose the login name. */
+export function shapeAuthor(u, v) {
+  if (!u || u.id === v.userId) return u;
+  return v.anonymize ? ANON_AUTHOR : shapeUser(u, v);
+}
+
+export const shapePost = (p, v) => (p ? { ...p, author: shapeAuthor(p.author, v) } : p);
+export const shapeComment = (cm, v) => (cm ? { ...cm, author: shapeAuthor(cm.author, v) } : cm);
+export const shapeBoard = (b, v) => (b ? { ...b, owner: shapeUser(b.owner, v) } : b);
+
+export function boardJson(db, b, view = PUBLIC_VIEW) {
+  const owner = getUserRow(db, b.owner_id);
+  return shapeBoard({
     id: b.id,
     slug: b.slug,
     title: b.title,
@@ -43,7 +77,7 @@ export function boardJson(db, b) {
     owner: owner ? userJson(owner) : null,
     createdAt: b.created_at,
     updatedAt: b.updated_at,
-  };
+  }, view);
 }
 
 export const sectionJson = (s) => ({ id: s.id, boardId: s.board_id, title: s.title, rank: s.rank });
@@ -140,9 +174,11 @@ export function buildPosts(db, rows, scope, viewerId = null, withMine = viewerId
   return rows.map((r) => postJson(r, counts.get(r.id) ?? 0, reacts.get(r.id) ?? blankReactions(withMine)));
 }
 
-export function getPostJson(db, id, viewerId = null) {
+/** Raw post JSON by default (event payloads); pass `view` to shape the author for a REST response. */
+export function getPostJson(db, id, viewerId = null, view = null) {
   const row = db.get(POST_SELECT + ' WHERE p.id = ?', id);
-  return row ? buildPosts(db, [row], { postId: id }, viewerId)[0] : null;
+  const json = row ? buildPosts(db, [row], { postId: id }, viewerId)[0] : null;
+  return view ? shapePost(json, view) : json;
 }
 
 export function reactionsOf(db, postId, viewerId = null) {

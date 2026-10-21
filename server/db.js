@@ -100,6 +100,9 @@ CREATE TABLE uploads (
 );
 CREATE INDEX idx_uploads_board ON uploads(board_id);
 `,
+  /* v2: per-user upload quota (SUM of the last 24 h) and the orphan sweep */ `
+CREATE INDEX idx_uploads_user ON uploads(user_id, created_at);
+`,
 ];
 
 const norm = (p) => p.map((v) => (v === undefined ? null : v === true ? 1 : v === false ? 0 : v));
