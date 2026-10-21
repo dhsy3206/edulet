@@ -2,6 +2,8 @@
 //   route('/b/:slug', handler, { key })      handler(params, query) → void | cleanupFn | { destroy(), update?(params, query) }
 // When the next match has the same `key` and the current result has update(), the page is updated in place
 // instead of being torn down (used so /b/:slug and /b/:slug/p/:id share one mounted board).
+import { withBase, stripBase } from './base.js';
+
 const routes = [];
 let current = null; // { key, params, result }
 let notFound = null;
@@ -41,7 +43,7 @@ function parseQuery(search) {
 }
 
 function resolve() {
-  const path = location.pathname;
+  const path = stripBase(location.pathname);
   const query = parseQuery(location.search);
   for (const r of routes) {
     const m = r.re.exec(path);
@@ -72,25 +74,26 @@ export const router = {
       const url = new URL(a.href, location.href);
       if (url.origin !== location.origin) return;
       e.preventDefault();
-      router.go(url.pathname + url.search + url.hash);
+      router.go(stripBase(url.pathname) + url.search + url.hash);
     });
     resolve();
   },
   go(path) {
-    if (path === location.pathname + location.search + location.hash) return resolve();
-    history.pushState(null, '', path);
+    const target = withBase(path);
+    if (target === location.pathname + location.search + location.hash) return resolve();
+    history.pushState(null, '', target);
     resolve();
     window.scrollTo(0, 0);
   },
   /** Change the URL without running the router (used for post deep links inside a mounted board). */
   replace(path) {
-    history.replaceState(null, '', path);
+    history.replaceState(null, '', withBase(path));
   },
   /** Same as replace but adds a history entry, still without resolving. */
   push(path) {
-    history.pushState(null, '', path);
+    history.pushState(null, '', withBase(path));
   },
   get path() {
-    return location.pathname;
+    return stripBase(location.pathname);
   },
 };

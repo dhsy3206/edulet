@@ -1,0 +1,47 @@
+name: pages
+# Static "demo mode" build of Edulet on GitHub Pages: https://<user>.github.io/edulet/
+# (Pages cannot run the Node server; the demo's service worker plays the server and data stays in the visitor's browser.)
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'seed/**'
+      - 'tools/build-pages.mjs'
+      - 'e2e/pages.mjs'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+      - name: Build the static site
+        run: node tools/build-pages.mjs --base /edulet
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

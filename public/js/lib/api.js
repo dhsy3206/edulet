@@ -1,4 +1,25 @@
 // Thin fetch wrapper for /api. Throws ApiError on non-2xx. Adds X-Client-Id so the server can tag SSE echoes.
+import { BASE, DEMO } from './base.js';
+
+const API = BASE + '/api';
+const SID_KEY = 'edulet_demo_sid'; // demo mode only: a service worker cannot set cookies, so the session travels as a header
+const demoHeaders = (headers) => {
+  if (!DEMO) return;
+  try {
+    const s = localStorage.getItem(SID_KEY);
+    if (s) headers['X-Edulet-Session'] = s;
+  } catch { /* storage blocked */ }
+};
+const demoSession = (get) => {
+  if (!DEMO) return;
+  const s = get('X-Edulet-Session');
+  if (s === null) return;
+  try {
+    if (s) localStorage.setItem(SID_KEY, s);
+    else localStorage.removeItem(SID_KEY);
+  } catch { /* ignore */ }
+};
+
 export class ApiError extends Error {
   constructor(status, code, message, retryAfter) {
     super(message || '요청을 처리하지 못했어요.');
@@ -47,6 +68,7 @@ async function parse(res) {
 
 async function request(method, path, body) {
   const headers = { 'X-Client-Id': clientId };
+  demoHeaders(headers);
   const init = { method, headers, credentials: 'same-origin' };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
@@ -58,7 +80,8 @@ async function request(method, path, body) {
   const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
   let res, data;
   try {
-    res = await fetch('/api' + path, init);
+    res = await fetch(API + path, init);
+    demoSession((n) => res.headers.get(n));
     data = await parse(res);
   } catch (err) {
     if (ctl.signal.aborted) throw new ApiError(0, 'timeout', '서버가 답하지 않아요. 잠시 뒤에 다시 해 주세요.');
@@ -81,13 +104,47 @@ export const api = {
   patch: (p, b = {}) => request('PATCH', p, b),
   del: (p) => request('DELETE', p),
 
+  /** Download an API file (export) through fetch so the demo session header is sent; works the same with cookies. */
+  async download(path, fallbackName) {
+    const headers = {};
+    demoHeaders(headers);
+    let res;
+    try {
+      res = await fetch(API + path, { headers, credentials: 'same-origin' });
+    } catch {
+      throw new ApiError(0, 'network', '내려받지 못했어요. 네트워크를 확인해 주세요.');
+    }
+    if (!res.ok) {
+      const d = await parse(res);
+      const e = d.error || {};
+      throw new ApiError(res.status, e.code, e.message);
+    }
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+    let name = fallbackName || 'download';
+    try {
+      if (m) name = decodeURIComponent(m[1]);
+    } catch { /* keep fallback */ }
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  },
+
   /** Upload raw bytes with progress. Resolves to the server's upload JSON. */
   upload(slug, file, onProgress) {
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('PUT', `/api/uploads?board=${encodeURIComponent(slug)}&name=${encodeURIComponent(file.name || 'file')}`);
+      xhr.open('PUT', `${API}/uploads?board=${encodeURIComponent(slug)}&name=${encodeURIComponent(file.name || 'file')}`);
       xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
       xhr.setRequestHeader('X-Client-Id', clientId);
+      const dh = {};
+      demoHeaders(dh);
+      for (const [k, v] of Object.entries(dh)) xhr.setRequestHeader(k, v);
       xhr.withCredentials = true;
       if (onProgress) xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
       xhr.timeout = 10 * 60 * 1000;

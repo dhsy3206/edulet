@@ -1,5 +1,7 @@
 // Tiny hyperscript helper. User-controlled values must only ever reach the DOM through
 // text nodes / attributes created here — never innerHTML.
+import { withBase } from './base.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'poster', 'xlink:href']);
 const PROPS = new Set(['value', 'checked', 'disabled', 'selected', 'indeterminate', 'readOnly', 'multiple']);
@@ -33,8 +35,13 @@ function applyProps(el, props) {
     } else if (v === true) {
       el.setAttribute(k, '');
     } else {
-      if (URL_ATTRS.has(k) && !safeUrl(v)) continue;
-      el.setAttribute(k, String(v));
+      let val = v;
+      if (URL_ATTRS.has(k)) {
+        if (!safeUrl(val)) continue;
+        // app-internal URLs follow the app's base path (GitHub Pages subpath)
+        if (typeof val === 'string' && val.startsWith('/') && (props['data-link'] || /^\/(uploads|seed|assets|api)\//.test(val))) val = withBase(val);
+      }
+      el.setAttribute(k, String(val));
     }
   }
 }

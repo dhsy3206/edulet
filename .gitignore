@@ -7,3 +7,4 @@ Thumbs.db
 coverage/
 e2e/out/
 .claude/
+dist/

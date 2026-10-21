@@ -1,6 +1,7 @@
 // Small helpers shared by the app-shell views (not part of the F1/F2 contract surface).
 import { h } from '../lib/h.js';
 import { router } from '../lib/router.js';
+import { withBase } from '../lib/base.js';
 import { toast, icon } from '../lib/ui.js';
 import { WALLPAPERS, DARK_WALLPAPERS } from '../lib/constants.js';
 import { cachedTone } from '../board/tone.js';
@@ -41,7 +42,7 @@ export const isGuest = (u) => !!(u && u.isGuest);
 export const isMember = (u) => !!u && !u.isGuest;
 
 export const boardPath = (slug) => '/b/' + encodeURIComponent(slug);
-export const boardUrl = (slug) => location.origin + boardPath(slug);
+export const boardUrl = (slug) => location.origin + withBase(boardPath(slug));
 
 /**
  * Wallpaper → { cls, style, dark, id }. Custom uploads ("/uploads/…") become a background-image; their chrome tone
@@ -50,7 +51,7 @@ export const boardUrl = (slug) => location.origin + boardPath(slug);
 export function wallpaperProps(wp) {
   if (typeof wp === 'string' && wp.startsWith('/uploads/')) {
     const tone = cachedTone(wp);
-    return { id: 'custom', cls: 'wp-custom', dark: tone !== 'light', toneKnown: !!tone, url: wp, style: { backgroundImage: `url(${JSON.stringify(wp)})` } };
+    return { id: 'custom', cls: 'wp-custom', dark: tone !== 'light', toneKnown: !!tone, url: wp, style: { backgroundImage: `url(${JSON.stringify(withBase(wp))})` } };
   }
   const id = WALLPAPERS.includes(wp) ? wp : 'green';
   return { id, cls: 'wp-' + id, dark: DARK_WALLPAPERS.includes(id), style: null };

@@ -38,6 +38,18 @@ docker build -t edulet .
 docker run -p 3000:3000 -v edulet-data:/data edulet
 ```
 
+## GitHub Pages 데모 모드
+
+**https://dhsy3206.github.io/edulet/** — 서버를 켜지 않고 바로 써 볼 수 있는 정적 데모입니다. GitHub Pages 는 파일만 내려 주고 Node 서버를 돌릴 수 없으므로, 이 빌드에서는 **서비스 워커가 서버 역할**(같은 API 계약, `public/edulet-sw.js` + `public/demo/`)을 하고 데이터는 **방문자 브라우저의 IndexedDB** 에 저장됩니다.
+
+| 되는 것 | 안 되는 것 |
+|---|---|
+| 가입·보드 만들기·글/댓글/반응·업로드(10MB)·형식 7종·내보내기·복제·참조 보드와 연습장 시드 | **다른 기기·다른 사람과 보드를 공유할 수 없습니다.** 내가 만든 보드와 글은 이 브라우저에만 있습니다(사이트 데이터를 지우면 사라짐) |
+| 같은 브라우저의 **여러 탭** 사이 실시간 동기화(BroadcastChannel) | 여러 사람이 동시에 쓰는 실시간 협업 — 서버 모드(`npm start`/Docker)가 필요합니다 |
+| 화면 왼쪽 아래 "데모 모드" 알약에서 설명 확인·**초기화**(시드 복원) | 요청 한도·저장 공간 한도·SSRF 검사 같은 서버 쪽 방어(내 브라우저 안에서만 도는 데모라 대상이 아닙니다), 링크 미리보기는 브라우저가 접근할 수 있는 주소만 |
+
+서비스 워커를 쓸 수 없는 브라우저(일부 시크릿 창 등)에서는 한국어 안내가 나옵니다. 배포는 `main` 에 푸시하면 `.github/workflows/pages.yml` 이 `node tools/build-pages.mjs --base /edulet` 으로 `dist/` 를 만들어 올립니다(`npm run build:pages`). 실제 교실에서 여럿이 함께 쓰려면 위 빠른 시작처럼 서버를 띄우세요.
+
 ## 기능
 
 | 영역 | 내용 |
@@ -85,8 +97,10 @@ docker run -p 3000:3000 -v edulet-data:/data edulet
 ```
 server/   Node 서버 — http.js(라우터) auth/boards/posts/sections/comments/reactions/uploads/preview(SSRF 방어)/realtime(SSE)/seed
 public/   프런트 — js/lib(공용 기반·BoardController) js/views(앱 셸·페이지) js/board(보드 캔버스) css/ vendor/(QR)
+          edulet-sw.js · demo/  Pages 데모용 서비스 워커 "서버"(IndexedDB 저장)와 부팅 스크립트
 seed/     데모 보드 JSON + 이미지
-test/     서버 테스트(node:test)      e2e/  브라우저 수락 시나리오      tools/  cdp.mjs(크롬 구동기) 등
+test/     서버 테스트(node:test)      e2e/  브라우저 수락 시나리오(run.mjs 서버 모드 · pages.mjs 데모 모드)
+tools/    cdp.mjs(크롬 구동기) · build-pages.mjs(정적 사이트 빌드) 등
 docs/     CONTRACT.md(서버↔프런트 계약) REFERENCE.md(참조 보드 분석)
 ```
 
@@ -97,6 +111,7 @@ docs/     CONTRACT.md(서버↔프런트 계약) REFERENCE.md(참조 보드 분�
 ```bash
 npm test         # 서버 단위·통합 테스트 (의존성·브라우저 불필요, 약 15초)
 npm run e2e      # 실제 크롬 여러 개로 실시간·형식 전환·드래그 이동 등 (Chrome/Edge 필요, CHROME_PATH 로 지정 가능)
+npm run e2e:pages  # Pages 데모 빌드를 /edulet/ 아래 정적 서버로 띄워 서비스 워커 부팅·탭 간 동기화·업로드·초기화 등 확인
 ```
 
 E2E 는 `tools/cdp.mjs`(Node 22 내장 WebSocket 으로 크롬 DevTools 프로토콜을 직접 구동, 의존성 0)로 사용자마다 격리된 브라우저 컨텍스트를 만들어 실제 마우스·키보드 이벤트를 보냅니다.
@@ -112,7 +127,7 @@ E2E 는 `tools/cdp.mjs`(Node 22 내장 WebSocket 으로 크롬 DevTools 프로�
 ## 제3자 구성 요소와 출처
 
 - QR 코드: Kazuhiko Arase 의 *QRCode for JavaScript*(MIT) 핵심부를 `public/vendor/qrcode.js` 로 묶어 사용 — 라이선스는 `public/vendor/LICENSE-qrcode.txt`. "QR Code" 는 DENSO WAVE INCORPORATED 의 등록상표입니다.
-- 데모 보드 `demo-board` 는 공개된 참조 보드의 구조·문구·첨부를 옮긴 것입니다(작성자 이름과 이미지 포함). **저장소를 공개하기 전에 `seed/demo-board.json` 과 `seed/img/` 를 바꾸거나 지우세요.** 분석 과정은 `docs/REFERENCE.md` 에 있습니다.
+- 데모 보드 `demo-board` 는 공개된 참조 보드의 구조·문구·첨부를 옮긴 것입니다(작성자 표시 이름과 이미지 포함). 이 저장소와 Pages 데모는 공개 상태라 이 내용도 그대로 공개됩니다 — 원 작성자가 원하지 않거나 쓸 권리가 불확실하면 `seed/demo-board.json` 과 `seed/img/` 를 바꾸거나 지우세요. 분석 과정은 `docs/REFERENCE.md` 에 있습니다.
 - Edulet 은 Padlet 의 코드·로고·상표·스톡 이미지를 쓰지 않습니다. 구조와 상호작용만 참고했습니다.
 
 ## 라이선스
@@ -121,4 +136,4 @@ E2E 는 `tools/cdp.mjs`(Node 22 내장 WebSocket 으로 크롬 DevTools 프로�
 
 ## 알려진 한계
 
-서버 한 대·SQLite 한 파일 기준입니다(수백 명 동시 접속 교실 규모에 맞춤, 여러 서버로 나누려면 SSE 팬아웃을 바꿔야 함). 터치 화면에서는 카드를 끌지 않고 ⋮ 메뉴로 순서를 바꿉니다. 지도·타임라인 형식, 그림·녹음 첨부, 메일 알림, 외부 로그인(OAuth)은 만들지 않았습니다.
+Pages 데모는 위 표처럼 브라우저 한 곳에서만 동작하는 체험판입니다(비밀번호도 서버가 아니라 브라우저 안에서 PBKDF2 로 처리). 서버 모드는 서버 한 대·SQLite 한 파일 기준입니다(수백 명 동시 접속 교실 규모에 맞춤, 여러 서버로 나누려면 SSE 팬아웃을 바꿔야 함). 터치 화면에서는 카드를 끌지 않고 ⋮ 메뉴로 순서를 바꿉니다. 지도·타임라인 형식, 그림·녹음 첨부, 메일 알림, 외부 로그인(OAuth)은 만들지 않았습니다.

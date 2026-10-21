@@ -1,4 +1,6 @@
 // Small shared helpers for the board canvas (no DOM-building of user data here).
+import { withBase } from '../lib/base.js';
+
 /* ───────── text emptiness (UX-09) ───────── */
 // Zero-width / bidi-control characters render as nothing: a title made only of them must count as empty.
 const INVISIBLE = /[\u200b-\u200f\u2060\ufeff\u202a-\u202e]/g;
@@ -23,7 +25,7 @@ export function errorMessage(e, fallback = '처리하지 못했어요. 다시 �
 export function safeUrl(u) {
   if (!u || typeof u !== 'string') return null;
   try {
-    const x = new URL(u, location.href);
+    const x = new URL(withBase(u), location.href);
     return x.protocol === 'http:' || x.protocol === 'https:' ? x.href : null;
   } catch {
     return null;
@@ -139,7 +141,7 @@ export function placeSig(p) {
 }
 
 export function postUrl(slug, id) {
-  return `${location.origin}/b/${encodeURIComponent(slug)}/p/${id}`;
+  return `${location.origin}${withBase(`/b/${encodeURIComponent(slug)}/p/${id}`)}`;
 }
 
 export function fileExt(name) {

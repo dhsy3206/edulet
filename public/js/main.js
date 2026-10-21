@@ -36,6 +36,8 @@ installAvatarContrast();
 
 async function boot() {
   const app = document.getElementById('app');
+  // static demo build: demo/boot.js resolves this once its service-worker "server" is controlling the page
+  if (window.__edulet_ready) await window.__edulet_ready;
   await Promise.all([store.loadConfig(), store.loadMe()]);
 
   route('/', () => homePage(app));

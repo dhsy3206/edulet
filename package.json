@@ -12,6 +12,8 @@
     "dev": "node --watch server/index.js",
     "test": "node --test --test-concurrency=1 test/",
     "seed": "node server/seed-cli.js",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "build:pages": "node tools/build-pages.mjs --base /edulet",
+    "e2e:pages": "node e2e/pages.mjs"
   }
 }

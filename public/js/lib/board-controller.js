@@ -4,6 +4,7 @@ import { api, ApiError, clientId } from './api.js';
 import { store } from './store.js';
 import { router } from './router.js';
 import { SECTIONED } from './constants.js';
+import { BASE } from './base.js';
 import { modal, toast } from './ui.js';
 import { plainText } from './markdown.js';
 
@@ -234,7 +235,7 @@ export class BoardController {
 
   _connect() {
     if (this._destroyed || this._es) return;
-    const es = new EventSource(`/api/boards/${encodeURIComponent(this.slug)}/events`);
+    const es = new EventSource(`${BASE}/api/boards/${encodeURIComponent(this.slug)}/events`);
     this._es = es;
     es.onopen = () => {
       this._lastEventAt = Date.now();

@@ -219,7 +219,18 @@ function exportSection(ctl, closeDialog) {
       dupBtn.disabled = false;
     }
   });
-  const dl = (format, label) => h('a', { class: 'btn btn-secondary', href: `/api/boards/${enc(slug)}/export?format=${format}`, download: '' }, icon('download', { size: 18 }), label);
+  // downloaded through fetch (not a bare link) so it also works where the session is not a cookie (static demo)
+  const dl = (format, label) => h('a', {
+    class: 'btn btn-secondary', href: `/api/boards/${enc(slug)}/export?format=${format}`, download: '',
+    onClick: async (e) => {
+      e.preventDefault();
+      try {
+        await api.download(`/boards/${enc(slug)}/export?format=${format}`, `${slug}.${format}`);
+      } catch (err) {
+        toast(err.message || '내려받지 못했어요.', 'error');
+      }
+    },
+  }, icon('download', { size: 18 }), label);
   const el = h('section', { class: 'bp-share-sec', id: 'bp-share-export', dataset: { section: 'export' } },
     h('h3', null, '내보내기'),
     h('p', { class: 'muted' }, '보드의 글을 파일로 내려받아요. CSV는 엑셀에서 열 수 있어요.'),

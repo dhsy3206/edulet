@@ -329,3 +329,13 @@ class BoardController {
 | 접속자 목록 | 앞 50명 + `more` · 보드당 초당 1번 | — |
 
 인증·가입·게스트: IP 당 분당 20회(429 `rate_limited`)는 그대로다.
+
+## 12. 정적 데모 모드 (GitHub Pages — `tools/build-pages.mjs`)
+
+Pages 는 파일만 내려 주므로 Node 서버를 못 쓴다. 이 빌드에서는 **서비스 워커(`public/edulet-sw.js` + `public/demo/sw-*.js`)가 §5 REST 와 §6 이벤트의 서버 역할**을 하고, 프런트는 서버 모드와 **같은 코드**다(차이는 아래 둘뿐). 데이터는 방문자 브라우저의 IndexedDB 에만 있다 — 다른 기기·사람과 공유되지 않는다.
+
+- **하위 경로**: 앱은 `BASE`(`public/js/lib/base.js` — 서버 모드 `""`, Pages `"/edulet"`)를 모든 내부 URL(`/api`·`/uploads`·`/seed`·`/assets`·라우터 링크)에 붙인다. `demo/boot.js` 가 `window.EDULET_BASE`·`EDULET_DEMO` 를 앱보다 먼저 정하고 서비스 워커가 페이지를 제어할 때까지 `window.__edulet_ready` 로 부팅을 미룬다.
+- **달라지는 것**: 쿠키 대신 요청 헤더 `X-Edulet-Session`(localStorage `edulet_demo_sid`) · 보드 SSE 는 `EventSource` 대체물이 `POST /api/_demo/stream`(등록)·`/stream/ping`·`/stream/close` 로 워커에 연결을 알리고, 이벤트는 BroadcastChannel `edulet-demo-events` 로 같은 브라우저의 탭들에 전달(§6 이벤트 형식 그대로) · 비밀번호 PBKDF2-SHA256(WebCrypto 에 scrypt 없음) · 업로드 한도 10MB(Blob 으로 IndexedDB 에 저장, 서빙 헤더는 §11 하드닝 그대로) · 링크 미리보기는 브라우저에서 닿는 주소만(oEmbed best-effort) · 내보내기 링크는 헤더가 필요해 `api.download()` 로 받는다.
+- **없는 것**: §11 의 요청·업로드 한도와 SSRF 검사(자기 브라우저 안에서만 도는 데모라 대상이 아님). 한도 테스트(`test/`)는 서버 모드 전용이다.
+- **데모 전용 경로**: `/api/_demo/*`(스트림 등록, `reset` = 시드 복원). 초기화는 같은 브라우저의 모든 탭을 다시 불러온다.
+- **검증**: `npm run e2e:pages` (`e2e/pages.mjs`) — `/edulet/` 아래 정적 서버(없는 경로는 `404.html`, Pages 와 같음)로 빌드를 띄워 부팅·딥링크·두 탭 실시간·보드 생성·7형식·업로드·내보내기·로그아웃/로그인·초기화·워커 재시작 복구·바깥 요청 없음을 본다.
