@@ -8,7 +8,7 @@ let app;
 let owner;
 let board;
 before(async () => {
-  app = await startApp({ config: { maxUploadMb: 0.05 } }); // 52,428 bytes
+  app = await startApp({ config: { maxUploadMb: 0.05, uploadRateMax: 100000 } }); // 52,428 bytes; the per-user upload rate limit has its own tests
   owner = makeUser(app, 'owner');
   board = await makeBoard(owner, { title: '업로드', linkAccess: 'comment' });
 });
