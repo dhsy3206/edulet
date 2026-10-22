@@ -214,6 +214,7 @@ try {
     check('P1 /edulet/api/health 는 서비스 워커가 답함', health.status === 200 && health.body.ok === true);
     const cfg = await call(page, 'GET', '/config');
     check('P1 /config: demo:true, 가입 허용, 업로드 10MB', cfg.body.demo === true && cfg.body.allowRegister === true && cfg.body.maxUploadMb === 10 && cfg.body.linkPreview === true, JSON.stringify(cfg.body));
+    check('P1 /config: 서버와 같은 모양의 share(공개 주소·LAN 주소 없음)', JSON.stringify(cfg.body.share) === '{"origin":null,"lan":[]}', JSON.stringify(cfg.body.share));
     const nope = await call(page, 'GET', '/nope');
     check('P1 모르는 /api 경로는 404 JSON', nope.status === 404 && nope.body.error?.code === 'not_found');
     const passthrough = await page.eval(`fetch('/edulet/build-info.json').then(async r => ({ status: r.status, mode: (await r.json()).mode }))`);
@@ -388,6 +389,28 @@ try {
     await ctx.close();
   });
 
+  /* ══════════ P2c: "이름 없이 바로 참여" works in the demo too (the worker's /auth/guest, a made-up "참여자 NNN" name) ══════════ */
+  await step('P2c', async () => {
+    const ctx = await browser.newContext();
+    const A = await newPage(ctx, '/edulet/');
+    await appReady(A, '.home-hero');
+    await A.click('a[href="/edulet/b/practice"]');
+    await A.waitFor('[data-post-id]', { timeout: 15000 });
+    await keepAlive(A);
+    await openComposer(A);
+    await A.type('[data-role="composer"] [name=title]', '이름 없이 쓴 글');
+    await A.click('[data-role="composer-submit"]');
+    await A.waitFor('.modal-backdrop [data-role="guest-anon"]');
+    check('P2c 이름 모달에 "이름 없이 바로 참여" 단추가 있고 이름 칸·취소·참여하기도 그대로', (await A.count('.modal-backdrop input')) === 1 && (await A.eval(`[...document.querySelectorAll('.modal-backdrop button')].map(b => b.innerText.trim()).join('|')`)).includes('취소') && (await A.text('.modal-actions .btn-primary')) === '참여하기');
+    await A.click('[data-role="guest-anon"]');
+    await A.waitFor(cardWith('이름 없이 쓴 글'), { timeout: 8000 });
+    const me = await call(A, 'GET', '/auth/me');
+    check('P2c 데모에서도 "참여자 NNN" 게스트로 글이 올라감', me.body.user?.isGuest === true && /^참여자 [1-9]\d{3}$/.test(me.body.user?.displayName), JSON.stringify(me.body.user));
+    check('P2c 콘솔 오류 없음', pageErrors(A).length === 0, pageErrors(A).join(' | ').slice(0, 300));
+    allErrors.push(...pageErrors(A));
+    await ctx.close();
+  });
+
   /* ══════════ P3: register → board from the dashboard → 7 formats → composer with an image → export → logout/login ══════════ */
   await step('P3', async () => {
     const ctx = await browser.newContext();
@@ -475,6 +498,57 @@ try {
     const viaFetch = await page.eval(`(async () => { const r = await fetch('/edulet/api/boards/${slug}/export?format=csv', { headers: { 'X-Edulet-Session': localStorage.getItem('edulet_demo_sid') } }); const bytes = new Uint8Array(await r.arrayBuffer()); const t = new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes); return { status: r.status, bom: bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF, head: t.slice(1, 20), disp: r.headers.get('content-disposition'), rows: t.trim().split('\\r\\n').length }; })()`);
     check('P3 CSV 내보내기(세션 헤더로): BOM, 머리글, 글 2줄', viaFetch.status === 200 && viaFetch.bom && viaFetch.head.startsWith('섹션,작성자') && viaFetch.rows === 3 && /^attachment/.test(viaFetch.disp), JSON.stringify(viaFetch));
     await page.key('Escape');
+    await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+
+    // the share dialog is honest about what a demo can do: its link opens the demo site on THIS browser's data only, so no LAN address,
+    // no address picker, and a notice that says so (this page is on 127.0.0.1, yet no "only on this PC" warning: the demo notice replaces it)
+    const demoShare = () => page.eval(`(() => {
+      const root = document.querySelector('[data-role="share"]');
+      const notes = [...root.querySelectorAll('[data-role="share-note"]')];
+      const r = root.getBoundingClientRect();
+      const body = root.querySelector('.modal-body');
+      return {
+        url: root.querySelector('input[name=url]').value, kinds: notes.map((n) => n.dataset.kind), text: notes.map((n) => n.innerText).join(' | '),
+        hasSelect: !!root.querySelector('[data-role="share-host"], select[name=shareHost]'), side: root.querySelector('.bp-share-qrside').innerText,
+        links: [...root.querySelectorAll('[data-role="share-note"] a')].map((a) => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel })),
+        overflow: Math.max(document.documentElement.scrollWidth - window.innerWidth, body.scrollWidth - body.clientWidth),
+        outside: [...root.querySelectorAll('.bp-share-note, .bp-share-qr, input')].filter((e) => { const q = e.getBoundingClientRect(); return q.left < r.left - 1 || q.right > r.right + 1; }).length,
+      };
+    })()`);
+    await page.waitFor('!document.querySelector(".toast")', { timeout: 8000 });
+    await page.click('[aria-label="공유"]');
+    await page.waitFor('[data-role="share"] input[name=url]');
+    let ds = await demoShare();
+    check('P3 데모 공유 창: 링크는 데모 주소 그대로(localhost 대체·LAN 주소 없음)', ds.url === `${ORIGIN}/edulet/b/${slug}`, ds.url);
+    check('P3 데모 공유 창: 안내 상자가 하나뿐이고 "이 브라우저 안에서만"·"다른 PC·휴대폰" 을 말함(localhost 경고는 대신 나오지 않음)', ds.kinds.join() === 'demo' && /이 브라우저 안에서만 동작해요/.test(ds.text) && /다른 PC·휴대폰/.test(ds.text) && /서버 모드/.test(ds.text), JSON.stringify(ds));
+    check('P3 데모 공유 창: README "다른 PC 와 함께 쓰기" 로 가는 링크(새 창, noopener)', ds.links.length === 1 && ds.links[0].href === 'https://github.com/dhsy3206/edulet#다른-pc-와-함께-쓰기' && ds.links[0].target === '_blank' && /noopener/.test(ds.links[0].rel), JSON.stringify(ds.links));
+    check('P3 데모 공유 창: 주소 고르기(select)가 없음', !ds.hasSelect);
+    check('P3 데모 공유 창: QR 옆 설명이 "다른 기기에서는 보이지 않아요" (휴대폰으로 바로 열린다고 말하지 않음)', /다른 기기에서는 보이지 않아요/.test(ds.side) && !/바로 열려요/.test(ds.side), ds.side);
+    await sleep(250); // let the dialog finish its pop-in
+    await page.screenshot(join(OUT, 'pages-p3-share-demo.png'));
+    await page.key('Escape');
+    await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+    // even if a (wrong) server value reached the demo, nothing of it is used
+    await page.eval(`(async () => { const { store } = await import('/edulet/js/lib/store.js'); window.__cfg0 = store.config; store.set('config', { ...store.config, share: { origin: 'https://evil.example', lan: ['http://10.0.0.5:3000', 'http://10.0.0.6:3000'] } }); return 1; })()`);
+    await page.click('[aria-label="공유"]');
+    await page.waitFor('[data-role="share"] input[name=url]');
+    ds = await demoShare();
+    check('P3 데모 공유 창: 서버 값(origin·lan)이 와도 무시 — 데모 주소·select 없음·안내 상자 하나', ds.url === `${ORIGIN}/edulet/b/${slug}` && !ds.hasSelect && ds.kinds.join() === 'demo', JSON.stringify(ds));
+    await page.key('Escape');
+    await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+    await page.eval(`(async () => { const { store } = await import('/edulet/js/lib/store.js'); store.set('config', window.__cfg0); return 1; })()`);
+    // phone width: the notice box must not push the dialog sideways
+    await page.setViewport(390, 740, true, 2);
+    await sleep(200);
+    await page.click('[aria-label="공유"]');
+    await page.waitFor('[data-role="share"] input[name=url]');
+    ds = await demoShare();
+    check('P3 데모 공유 창(모바일 390px): 안내 상자가 가로로 넘치지 않음', ds.overflow <= 1 && ds.outside === 0, JSON.stringify(ds));
+    await sleep(250); // let the dialog finish its pop-in
+    await page.screenshot(join(OUT, 'pages-p3-share-demo-mobile.png'));
+    await page.key('Escape');
+    await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+    await page.setViewport(1280, 860);
 
     // logout → login again keeps the boards
     await page.click('[aria-label="사용자 메뉴"]');

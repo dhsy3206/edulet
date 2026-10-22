@@ -62,6 +62,14 @@ export const store = {
     emit('config');
     return data.config;
   },
+  /** Re-read /config; unlike loadConfig a failed request keeps what we have (a dropped connection must not erase share.lan). */
+  async refreshConfig() {
+    try {
+      data.config = await api.get('/config');
+      emit('config');
+    } catch { /* keep the last known config */ }
+    return data.config;
+  },
   async loadMe() {
     try {
       const r = await api.get('/auth/me');

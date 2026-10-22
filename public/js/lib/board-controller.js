@@ -463,12 +463,19 @@ export class BoardController {
       let settled = false;
       const input = h('input', { class: 'input', type: 'text', maxlength: 40, placeholder: '예: 김하늘', autofocus: true, autocomplete: 'nickname' });
       const err = h('p', { class: 'form-error', role: 'alert' });
-      const submit = async (close) => {
-        const name = input.value.trim();
+      let inflight = false;
+      // secondary way in: no typing, a made-up name ("참여자 1234", four digits so a class of 30 rarely shares one) — so a whole class can open the link and start at once
+      const anonBtn = h('button', { type: 'button', class: 'btn btn-secondary guest-anon', dataset: { role: 'guest-anon' }, onClick: () => submit(m.close, `참여자 ${1000 + Math.floor(Math.random() * 9000)}`) }, '이름 없이 바로 참여');
+      // `given`: a name decided in code ("이름 없이 바로 참여"); otherwise the typed one
+      const submit = async (close, given) => {
+        const name = given != null ? given : input.value.trim();
         if (!name) {
           err.textContent = '이름을 입력해 주세요.';
           return false;
         }
+        if (inflight) return false; // a double click / Enter must not create two guests
+        inflight = true;
+        anonBtn.disabled = true;
         try {
           const u = await store.guest(name);
           settled = true;
@@ -485,12 +492,15 @@ export class BoardController {
               if (left-- <= 0) {
                 clearInterval(countdown);
                 err.textContent = '';
-                submit(close);
+                submit(close, given);
               }
             };
             tick();
             countdown = setInterval(tick, 1000);
           } else err.textContent = e.message || '입장하지 못했어요.';
+        } finally {
+          inflight = false;
+          anonBtn.disabled = false;
         }
         return false;
       };
@@ -499,7 +509,9 @@ export class BoardController {
         title: '이름을 알려 주세요', size: 'sm',
         body: h('form', { onSubmit: (e) => { e.preventDefault(); submit(m.close); } },
           h('p', { class: 'modal-text' }, '글과 댓글에 표시될 이름이에요. 로그인하지 않아도 참여할 수 있어요.'),
-          h('label', { class: 'field' }, h('span', { class: 'label' }, '이름'), input), err),
+          h('label', { class: 'field' }, h('span', { class: 'label' }, '이름'), input), err,
+          anonBtn,
+          h('p', { class: 'hint guest-anon-hint' }, '‘참여자 1234’ 같은 임시 이름으로 바로 들어가요.')),
         actions: [
           { label: '취소', kind: 'secondary', onClick: () => {} },
           { label: '참여하기', kind: 'primary', keepOpen: true, onClick: (close) => submit(close) },
@@ -512,14 +524,31 @@ export class BoardController {
     });
   }
 
+  /**
+   * ensureIdentity(), then wait for the snapshot reload that a new identity triggers (the role may have changed). Without the wait the
+   * snapshot — asked for before the first write, answered by the server before it — can arrive AFTER the write's response and wipe the
+   * just-created card from this very screen (the stream does not echo our own events back); easy to hit when a guest joins and posts at once.
+   */
+  async _identity() {
+    const u = await this.ensureIdentity();
+    if (this._reloading) {
+      try {
+        await this._reloading;
+      } catch {
+        /* a failed reload is reported by the snapshot itself */
+      }
+    }
+    return u;
+  }
+
   /** Run `fn` as a signed-in user; if the session turned out to be gone (signed out in another tab) ask again once. */
   async _auth(fn) {
-    await this.ensureIdentity();
+    await this._identity();
     try {
       return await fn();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        await this.ensureIdentity();
+        await this._identity();
         return fn();
       }
       throw e;
@@ -607,7 +636,7 @@ export class BoardController {
 
   /** kind: like|vote|star|grade|emoji. Optimistic, then confirmed by the response. */
   async react(id, kind, value) {
-    await this.ensureIdentity();
+    await this._identity();
     const p = this.postById(id);
     if (!p) return null;
     const before = p.reactions;

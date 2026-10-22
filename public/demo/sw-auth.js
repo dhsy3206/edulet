@@ -23,9 +23,11 @@
   const publicUser = (row) => ({ ...E.userJson(row), hasPassword: !!row.password_hash, googleEmail: null });
 
   router.add('GET', '/health', async () => ({ ok: true }));
-  // Sign in with Google needs a server that can keep a client secret: this browser-only demo reports it as off, so the page hides the button
+  // Sign in with Google needs a server that can keep a client secret: this browser-only demo reports it as off, so the page hides the button.
+  // share: there is no address other devices could open — the data lives in this browser (the share dialog explains that instead of offering a LAN address).
   router.add('GET', '/config', async () => ({
     allowRegister: true, maxUploadMb: C.MAX_UPLOAD_MB, linkPreview: true, google: false, googleDomains: [], version: C.VERSION, demo: true,
+    share: { origin: null, lan: [] },
   }));
 
   router.add('POST', '/auth/register', async (c) => {

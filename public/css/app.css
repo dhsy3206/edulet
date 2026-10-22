@@ -252,6 +252,9 @@
 .bp-swatch-upload:focus-within { outline: 3px solid var(--focus); outline-offset: 2px; }
 .bp-swatch-upload.busy { opacity: 0.7; pointer-events: none; }
 
+.guest-anon { width: 100%; margin-top: 2px; white-space: normal; }
+.guest-anon-hint { margin: 6px 0 8px; text-align: center; }
+
 /* share dialog */
 .bp-share { position: relative; }
 .bp-share-nav { position: sticky; top: -10px; z-index: 2; display: flex; gap: 6px; flex-wrap: wrap; margin: -10px 0 4px; padding: 10px 0 10px; background: var(--surface); border-bottom: 1px solid var(--border); }
@@ -264,6 +267,12 @@
 .bp-share-sec .bp-share-h3-gap { margin-top: 22px; }
 .bp-share-linkrow { display: flex; gap: 8px; }
 .bp-share-qr { display: flex; gap: 16px; align-items: center; margin: 16px 0; }
+.bp-share-host { margin-top: 12px; }
+.bp-share-host .field { margin-bottom: 6px; }
+.bp-share-host .select { min-width: 0; max-width: 100%; }
+.bp-share-note { margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.bp-share-note.warn { background: #fff7e0; color: #6b4500; border-color: #f3dc9a; }
+.bp-share-note a { color: inherit; font-weight: 700; }
 .bp-share-qrbox { width: 152px; flex: none; background: #fff; padding: 8px; border: 1px solid var(--border); border-radius: 12px; }
 .bp-share-qrside { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; font-size: 13px; }
 .bp-share-access .field { margin-bottom: 10px; }

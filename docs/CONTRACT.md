@@ -16,7 +16,7 @@ UI 문구는 **한국어**. 코드 식별자·주석은 영어/한국어 혼용 
 ```
 server/        index.js(진입·createApp) config.js db.js(스키마·마이그레이션) http.js(라우터·응답·본문) auth.js
                boards.js posts.js sections.js comments.js reactions.js uploads.js preview.js(링크 미리보기·SSRF 방어)
-               realtime.js(SSE) seed.js seed-cli.js constants.js
+               realtime.js(SSE) seed.js seed-cli.js constants.js share.js(`/config` 의 `share` — 같은 네트워크 주소)
 public/        index.html  css/{base,app,board}.css  js/main.js  js/lib/*  js/views/*  js/board/*  assets/
 seed/          *.json (시드 보드), img/ (시드 이미지)
 test/          *.test.js (node:test)
@@ -51,11 +51,13 @@ data/          (gitignore) edulet.db, uploads/
 | `GOOGLE_DOMAINS` | (없음) | 쉼표로 나눈 Google Workspace 도메인(`school.ac.kr, edu.example`). 있으면 그 도메인 계정만 로그인(§5). `gmail.com` 을 적으면 일반 Gmail 도 허용 |
 
 `createApp({ dataDir, port, seed })` 를 export 해서 테스트가 임시 폴더·임의 포트로 서버를 띄우고 `{ url, server, close() }` 를 받는다. `npm start` 는 이것을 호출한다. http 서버는 `headersTimeout` 20초, `requestTimeout` 10분을 명시한다.
+`npm start` 가 찍는 시작 안내(`announce()`): 첫 줄 `Edulet is running at http://localhost:<port>`, 이어서 **`HOST` 가 loopback 전용(`127.0.0.1`·`localhost`·`::1`)이 아니고 이 PC 의 LAN 주소가 있을 때만** 한 줄 `같은 네트워크의 다른 기기에서는: http://<LAN>:<port>`(주소가 둘 이상이면 ` 또는 ` 로 이어 붙임, 최대 4개 — 고르는 규칙은 §5 `GET /config` 의 `share.lan` 과 같다), 그 뒤에 시드 보드 주소. 컨테이너 안에서는 컨테이너 내부 주소가 찍히므로 그대로 믿지 말 것(포트 매핑은 직접 안내). 시험 전용 `createApp` 옵션 `networkInterfaces`(`os.networkInterfaces` 와 같은 모양을 돌려주는 함수)는 이 목록용 가짜 NIC 를 주입하는 길이며 환경변수·HTTP 로는 바꿀 수 없다.
 
 ### 운영 참고
 - **HTTPS 뒤에 둘 때**: 세션 쿠키는 `COOKIE_SECURE=auto` 에서 `PUBLIC_URL` 이 https 주소이거나(Google 로그인 설정에 쓰는 그 값), `TRUST_PROXY=1` 이고 프록시가 `X-Forwarded-Proto: https` 를 보낼 때만 `Secure` 가 붙는다. (https `PUBLIC_URL` 인 채로 http 로 접속해 시험하면 브라우저가 `Secure` 쿠키를 받지 않아 로그인이 안 된다 — 그때는 `COOKIE_SECURE=0`.) TLS 를 프록시가 끝내는 배포는 `EDULET_TRUST_PROXY=1` (프록시가 `X-Forwarded-For`·`X-Forwarded-Proto` 를 **덮어쓰도록** 설정) 또는 `EDULET_COOKIE_SECURE=1` 을 명시한다. 프록시 뒤에서 `TRUST_PROXY` 를 켜지 않으면 모든 사용자가 한 IP 로 보여 IP 단위 한도(인증 분당 20회, 실시간 연결 60개)를 함께 쓴다. 반대로 서버를 직접 공개하면서 `TRUST_PROXY=1` 을 켜면 `X-Forwarded-For` 를 클라이언트가 속일 수 있으니 켜지 않는다.
 - **`linkAccess` 와 구성원 역할**: 실효 역할은 소유자 → 구성원 행(그 역할 그대로) → `linkAccess`(§4) 순이다. 구성원 행은 링크 역할을 **문자 그대로 덮어쓰므로** `read` 구성원이 있는 보드가 `linkAccess=write` 이면, 그 사람이 로그아웃하고 새 게스트로 들어오면 `write` 를 얻는다(막으려면 `linkAccess` 를 낮추거나 `visibility=private`). 서버는 이를 막지 않는다.
 - **게스트와 사용자 단위 한도**: 업로드 용량·쓰기·링크 미리보기·실시간 연결 한도는 *사용자*(게스트 포함) 단위다. 게스트 계정은 새로 만들 수 있으므로(IP 당 분당 20회) 이 한도들은 IP 단위 인증 한도·서버 전체 상한(동시 업로드 6, 동시 미리보기 8, 소켓 2000)과 함께 작동한다. 누구나 쓸 수 있는 `linkAccess=write` 보드를 공개 서버에 둘 때는 디스크 여유를 감시한다.
+- **같은 네트워크의 다른 PC·휴대폰과 함께 쓰기**: 서버 모드는 기본 `HOST=0.0.0.0` 이라 같은 Wi-Fi·유선망의 기기가 게스트로 들어와 동시에 쓸 수 있다(Windows 방화벽이 Node.js 를 막으면 열리지 않는다). 교사가 `http://localhost:3000` 으로 열면 공유 링크·QR 의 주소가 다른 기기에서 못 여는 `localhost` 가 되므로, 서버가 **같은 네트워크 주소를 `GET /config` 의 `share.lan` 으로 알려 준다**(§5). 인터넷에 공개할 때는 `PUBLIC_URL`(공유 주소 = `share.origin`) + `TRUST_PROXY=1` + `COOKIE_SECURE`.
 - **고아 업로드 정리**: 서버를 시작할 때와 6시간마다, 24시간이 지났는데도 게시물 첨부·링크 미리보기 이미지·보드 배경이 가리키지 않는 업로드(파일과 행)를 지운다(올리고 게시하지 않은 파일, 게시물이 사라진 파일). 1시간 넘은 `.part` 임시 파일도 지운다. 이 정리가 없던 버전에서 올라온 데이터는 첫 시작 때 한 번 정리된다.
 
 ## 2. 상수 (`server/constants.js` ↔ `public/js/lib/constants.js` 동일 값)
@@ -135,7 +137,14 @@ pending 게시물은 **moderate 이상과 작성자 본인에게만** 목록·�
 **`username`(로그인 이름)은 본인과 그 보드의 admin 에게만 실제 값**이고, 그 밖의 보는 사람에게는 `null` 이다(게시물·댓글의 `author`, 보드의 `owner`, 내보내기, SSE 이벤트 모두). `/auth/*` 응답은 항상 본인이므로 그대로 온다. admin 의 구성원 목록(`GET /boards/:slug/members`, 스냅샷의 `members`, 구성원 추가·수정 응답)은 전원의 `username` 을 담는다. 클라이언트는 `username` 이 `null` 이면 "@아이디" 표시를 생략한다(게스트와 구별할 필요가 있으면 `isGuest` 를 쓴다).
 
 ### 인증
-- `GET  /config` → `{ allowRegister, maxUploadMb, linkPreview, google, googleDomains, version }` (`google`: Google 로그인이 켜졌는가 · `googleDomains`: 켜졌고 도메인 제한이 있을 때만 그 목록, 아니면 `[]`. 클라이언트 id 는 내보내지 않는다)
+- `GET  /config` → `{ allowRegister, maxUploadMb, linkPreview, google, googleDomains, share, version }` (`google`: Google 로그인이 켜졌는가 · `googleDomains`: 켜졌고 도메인 제한이 있을 때만 그 목록, 아니면 `[]`. 클라이언트 id 는 내보내지 않는다. `share`: 아래)
+  - **`share: { origin: string|null, lan: string[] }`** — 공유 링크·QR 의 기준 주소를 정하는 데 쓴다(`server/share.js`). `origin` = `PUBLIC_URL`(원점만, 예 `https://edulet.example.com`)이 있으면 그 값, 없으면 `null`. **`PUBLIC_URL` 의 호스트가 이 PC 자신(`localhost`·`127.x`·`[::1]`, Google 로그인 시험용으로 흔하다)이면 공개 주소로 치지 않아** `origin` 은 `null` 이고 아래 조건 1 도 참으로 본다(그 값이 모든 공유 링크·QR 을 `localhost` 로 못 박지 않도록). `lan` = 같은 네트워크의 다른 기기가 열 수 있는 이 서버의 주소들(`http://192.168.0.12:3000` 꼴 — 포트 포함, 끝 슬래시 없음). **다음 네 조건이 모두 참일 때만** 채우고 아니면 `[]`:
+    1. 공개 주소(`PUBLIC_URL`)가 없다(자기 PC 를 가리키는 값은 없는 것으로 본다). 공개 주소가 있으면 `origin` 이 대신한다.
+    2. `HOST` 가 loopback 전용(`127.0.0.1`·`127.x`·`localhost`·`::1`)이 아니다(`0.0.0.0`·`::`·특정 NIC 주소).
+    3. 요청의 `Host` 헤더 호스트명이 정확히 `localhost`·`127.x.x.x`·`[::1]` 이다(포트는 있어도 됨, 대소문자 무시) — 교사가 이 PC 에서 localhost 로 열었을 때만. 다른 기기·도메인·DNS 리바인딩 페이지에는 서버의 내부 주소를 알려 주지 않는다.
+    4. 접속 주소 `clientIp()`(`TRUST_PROXY` 반영)가 loopback(`127.x.x.x`·`::1`·`::ffff:127.x.x.x`)이다. **여기에 더해 프록시·터널이 붙이는 헤더(`X-Forwarded-*`·`Forwarded`·`Via`·`X-Original-Forwarded-For`·`X-Real-IP`·`X-Client-IP`·`X-Cluster-Client-IP`·`X-Azure-ClientIP`·`X-ARR-ClientIP`·`CF-Connecting-IP`·`True-Client-IP`·`Fastly-Client-IP`)가 하나라도 있으면 `TRUST_PROXY` 와 상관없이 loopback 이 아닌 것으로 본다**(보수적 판정 — 틀린 "아니오" 는 교사가 힌트를 못 보는 것뿐이고, 틀린 "예" 는 낯선 사람에게 서버 내부 주소를 알리는 것이다).
+    - 목록 내용: `os.networkInterfaces()` 의 IPv4 중 `internal=false`·링크 로컬(`169.254/16`)·멀티캐스트가 아닌 것. 가상 어댑터(`vEthernet`·`VirtualBox`·`VMware`·`WSL`·`docker`·`Hyper-V`·`Tailscale`·`ZeroTier`·`Bluetooth` 등의 이름)는 실제 어댑터 뒤로 보내고, 그 안에서 사설 대역 `192.168/16` → `10/8` → `172.16/12` → 그 밖 순으로 정렬(같으면 OS 순서), 중복 제거, **최대 4개**. 포트는 요청이 들어온 소켓의 로컬 포트(`req.socket.localPort`)이지 `config.port` 가 아니다(`PORT=0` 이나 포트 매핑에서도 맞도록). `HOST` 가 특정 IPv4 주소이면 그 주소 하나만(그 서버는 다른 NIC 로는 답하지 않는다), 호스트 이름·IPv6 주소이면 `[]`(어느 NIC 인지 알 수 없다). NIC 조회가 실패하면 `[]`(오류 아님).
+    - 데모 워커의 `GET /config` 는 `share: { origin: null, lan: [] }`(+ `demo: true`) 를 같이 낸다(§12).
 - `GET  /health` → `{ ok:true }`
 - `GET  /auth/me` → `{ user: User|null }`
 - `POST /auth/register {username,password,displayName}` → `{ user }` (+쿠키). 중복 409 `username_taken`
@@ -350,6 +359,7 @@ class BoardController {
 | 링크 미리보기 | 사용자당 분당 20 · 호스트당 분당 60 · 동시 8 (§5) | 429 `rate_limited`(사용자) / 최소 미리보기(그 밖) |
 | 실시간 연결 | 사용자당 10 · 주소당 60 · 서버 2000 소켓 | 429 `too_many_connections` |
 | 접속자 목록 | 앞 50명 + `more` · 보드당 초당 1번 | — |
+| 서버의 내부(LAN) 주소 | `GET /config` 의 `share.lan` 은 **이 PC 에서 localhost 로 연 요청**에만 채운다(§5 네 조건, 프록시 헤더가 있으면 안 채움). 그 밖의 요청은 `[]` | — (빈 목록) |
 
 인증·가입·게스트: IP 당 분당 20회(429 `rate_limited`)는 그대로다.
 
@@ -360,6 +370,7 @@ Pages 는 파일만 내려 주므로 Node 서버를 못 쓴다. 이 빌드에서
 - **하위 경로**: 앱은 `BASE`(`public/js/lib/base.js` — 서버 모드 `""`, Pages `"/edulet"`)를 모든 내부 URL(`/api`·`/uploads`·`/seed`·`/assets`·라우터 링크)에 붙인다. `demo/boot.js` 가 `window.EDULET_BASE`·`EDULET_DEMO` 를 앱보다 먼저 정하고 서비스 워커가 페이지를 제어할 때까지 `window.__edulet_ready` 로 부팅을 미룬다.
 - **달라지는 것**: 쿠키 대신 요청 헤더 `X-Edulet-Session`(localStorage `edulet_demo_sid`) · 보드 SSE 는 `EventSource` 대체물이 `POST /api/_demo/stream`(등록)·`/stream/ping`·`/stream/close` 로 워커에 연결을 알리고, 이벤트는 BroadcastChannel `edulet-demo-events` 로 같은 브라우저의 탭들에 전달(§6 이벤트 형식 그대로) · 비밀번호 PBKDF2-SHA256(WebCrypto 에 scrypt 없음) · 업로드 한도 10MB(Blob 으로 IndexedDB 에 저장, 서빙 헤더는 §11 하드닝 그대로) · 링크 미리보기는 브라우저에서 닿는 주소만(oEmbed best-effort) · 내보내기 링크는 헤더가 필요해 `api.download()` 로 받는다.
 - **Google 로그인은 없다**: 클라이언트 시크릿을 둘 서버가 없고, 데이터가 이 브라우저 안에만 있어 "다른 기기에서 같은 계정" 이라는 Google 로그인의 쓸모도 없다. 워커의 `GET /config` 는 `google:false` 라서 프런트가 버튼을 숨긴다. `/auth/*` 사용자 JSON 의 `hasPassword`(비게스트 `true`)·`googleEmail`(`null`)은 서버 모드와 같은 모양으로 낸다.
+- **공유 주소가 없다**: 데이터가 방문자 브라우저 안에만 있어 다른 기기에서 여는 주소가 존재하지 않는다. 워커의 `GET /config` 는 `share: { origin: null, lan: [] }` 와 `demo: true` 를 내고, 공유 창은 "이 데모는 이 브라우저 안에서만 동작해요 — 함께 쓰려면 서버 모드" 안내를 보여 준다.
 - **없는 것**: §11 의 요청·업로드 한도와 SSRF 검사(자기 브라우저 안에서만 도는 데모라 대상이 아님). 한도 테스트(`test/`)는 서버 모드 전용이다.
 - **데모 전용 경로**: `/api/_demo/*`(스트림 등록, `reset` = 시드 복원). 초기화는 같은 브라우저의 모든 탭을 다시 불러온다.
 - **검증**: `npm run e2e:pages` (`e2e/pages.mjs`) — `/edulet/` 아래 정적 서버(없는 경로는 `404.html`, Pages 와 같음)로 빌드를 띄워 부팅·딥링크·두 탭 실시간·보드 생성·7형식·업로드·내보내기·로그아웃/로그인·초기화·워커 재시작 복구·바깥 요청 없음을 본다.

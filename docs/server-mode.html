@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edulet 서버 모드 사용법 — 유선·무선</title>
+<style>
+  :root { --bg:#f6f8f7; --card:#fff; --ink:#17231e; --muted:#5b6b64; --line:#dbe3df; --brand:#0f7a4f; --brand-soft:#e3f4ec; --warn:#8a4b00; --warn-bg:#fff4e0; --warn-line:#f0d29b; --code:#eef2f0; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#101614; --card:#18211e; --ink:#e8efec; --muted:#9bb0a7; --line:#2b3934; --brand:#3ec58a; --brand-soft:#173126; --warn:#ffd08a; --warn-bg:#33270f; --warn-line:#5b4519; --code:#222d29; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.65 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:28px 16px 56px; }
+  h1 { font-size:1.65rem; margin:0 0 4px; }
+  h2 { font-size:1.2rem; margin:34px 0 10px; padding-bottom:6px; border-bottom:2px solid var(--line); }
+  p { margin:8px 0; }
+  .lead { color:var(--muted); margin-bottom:18px; }
+  code, kbd { background:var(--code); border-radius:5px; padding:1px 6px; font:0.92em/1.4 Consolas,"D2Coding",monospace; }
+  .steps { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); counter-reset:s; padding:0; list-style:none; margin:14px 0; }
+  .steps li { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 14px 14px 52px; position:relative; counter-increment:s; }
+  .steps li::before { content:counter(s); position:absolute; left:14px; top:14px; width:28px; height:28px; border-radius:50%; background:var(--brand); color:#fff; font-weight:700; display:grid; place-items:center; }
+  .steps li > b:first-child { display:block; margin-bottom:2px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; font-size:0.97rem; }
+  th, td { text-align:left; vertical-align:top; padding:9px 12px; border-bottom:1px solid var(--line); }
+  th { background:var(--brand-soft); font-weight:700; }
+  tr:last-child td { border-bottom:0; }
+  .box { border-radius:12px; padding:14px 16px; margin:14px 0; border:1px solid var(--line); background:var(--card); }
+  .box.ip { background:var(--warn-bg); border-color:var(--warn-line); }
+  .box.ip h3 { color:var(--warn); }
+  .box h3 { margin:0 0 6px; font-size:1.05rem; }
+  .box ul, .box ol { margin:6px 0 2px; padding-left:22px; }
+  .tag { display:inline-block; font-size:0.78rem; font-weight:700; padding:1px 8px; border-radius:99px; background:var(--brand-soft); color:var(--brand); margin-right:4px; }
+  details { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin:10px 0; }
+  summary { cursor:pointer; font-weight:700; }
+  pre { background:var(--code); border-radius:8px; padding:10px 12px; overflow:auto; font:0.9em/1.5 Consolas,"D2Coding",monospace; margin:8px 0; }
+  .foot { color:var(--muted); font-size:0.9rem; margin-top:30px; }
+  @media print { body { background:#fff; color:#000; } .steps li, .box, table, details { break-inside:avoid; } details[open] summary ~ * { display:block; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Edulet 서버 모드 사용법</h1>
+  <p class="lead">같은 교실의 PC·휴대폰이 <b>로그인 없이 링크나 QR 로</b> 한 보드를 동시에 쓰는 방법입니다. 유선·무선 모두 되고, 와이파이 주소(IP)가 바뀌는 경우도 다룹니다.</p>
+
+  <h2>1. 세 단계로 시작</h2>
+  <ol class="steps">
+    <li><b>서버 켜기</b>보드를 열어 둘 PC 에서 <code>run.cmd</code> 를 더블클릭(또는 <code>npm start</code>). 검은 서버 창은 수업이 끝날 때까지 닫지 마세요.</li>
+    <li><b>보드 만들고 공유</b>교사 PC 브라우저에서 <code>http://localhost:3000</code> 을 열고(처음이면 교사 계정을 가입) 보드를 만든 뒤 <b>공유</b>를 누르면, 링크와 QR 이 <b>다른 기기가 열 수 있는 주소</b>로 나옵니다.</li>
+    <li><b>학생 입장(로그인 없음)</b>같은 와이파이의 휴대폰은 QR 스캔, PC 는 링크 열기. 이름 입력 창에서 <b>“이름 없이 바로 참여”</b> 한 번이면 끝. 글·댓글이 모두의 화면에 바로 나타나요.</li>
+  </ol>
+  <p>필요한 것: Node.js 22.13 이상, 서버 PC 와 학생 기기가 <b>같은 공유기(같은 와이파이/유선망)</b>. 처음 켤 때 뜨는 <b>Windows 방화벽</b> 창에서 <b>개인 네트워크</b>를 체크하고 <b>액세스 허용</b>을 누르세요(안 누르면 다른 기기가 못 들어옵니다).</p>
+
+  <h2>2. 유선과 무선</h2>
+  <table>
+    <tr><th></th><th>서버 PC 를 <span class="tag">유선</span>으로</th><th>서버 PC 를 <span class="tag">무선</span>으로</th></tr>
+    <tr><td>추천</td><td><b>가장 안정적</b>. 교사 PC 는 가능하면 유선.</td><td>가능하지만 주소·연결이 바뀔 수 있음.</td></tr>
+    <tr><td>학생 기기</td><td>같은 공유기의 와이파이·유선이면 모두 입장 가능</td><td>같은 와이파이에 연결</td></tr>
+    <tr><td>주의</td><td>유선+무선이 둘 다 켜진 PC 는 주소가 둘. 공유 창의 <b>“공유할 주소”</b>에서 <b>학생들이 쓰는 와이파이와 같은 쪽</b>(보통 <code>192.168.…</code> 또는 <code>10.…</code>)을 고르세요.</td><td>학교 와이파이가 기기끼리 통신을 막거나(AP 격리) <b>손님용 와이파이</b>면 안 열려요. 이때는 서버 PC 를 유선으로 옮기세요.</td></tr>
+  </table>
+
+  <div class="box ip">
+    <h3>⚠ 무선이면 PC 의 주소(IP)가 바뀔 수 있어요</h3>
+    <p>공유기가 주소를 자동으로 나눠 주기 때문에, <b>와이파이를 다시 연결하거나 · PC 가 절전에서 깨거나 · 공유기를 껐다 켜거나 · 다른 와이파이로 옮기면</b> 주소가 달라질 수 있습니다(유선도 설정에 따라 바뀝니다). 주소가 바뀌면 이미 보낸 링크·QR 은 <b>열리지 않습니다</b>.</p>
+    <ol>
+      <li><b>바로 해결</b>: 교사 PC 에서 <b>공유 창을 다시 엽니다.</b> 열 때마다 <b>현재 주소를 새로 읽어</b> 링크와 QR 을 다시 만들고, 바뀌었으면 알려 줍니다. 학생들은 <b>새 QR 을 다시 스캔</b>하면 됩니다. (서버 창에 처음 찍힌 주소는 켠 순간의 값이라 낡았을 수 있어요.)</li>
+      <li><b>미리 막기</b>: 공유기 설정에서 이 PC 에 <b>고정 IP</b>(“DHCP 예약”·“IP 고정 할당”)를 주거나, 서버 PC 를 <b>유선</b>으로 연결하세요. 학교 공유기를 못 만지면 “수업 시작 전에 QR 을 새로 띄운다”를 습관으로.</li>
+      <li><b>수업 중 한 줄 안내</b>: “안 열리면 칠판의 QR 을 다시 스캔해 주세요.”</li>
+    </ol>
+    <p>주소를 직접 보려면 서버 PC 의 명령 프롬프트에서 <code>ipconfig</code> → <b>Wi-Fi</b> 또는 <b>이더넷</b> 항목의 <b>IPv4 주소</b>. 학생 기기에서 <code>http://그주소:3000</code> 으로 열어도 같습니다.</p>
+  </div>
+
+  <h2>3. 안 열릴 때</h2>
+  <table>
+    <tr><th>이런 일이…</th><th>이렇게 확인</th></tr>
+    <tr><td>다른 기기만 안 열려요</td><td>Windows 방화벽 허용 — 보안 → 방화벽 및 네트워크 보호 → “방화벽을 통해 앱 허용” → <b>Node.js JavaScript Runtime</b> 의 <b>개인</b> 체크.</td></tr>
+    <tr><td>“연결할 수 없음”</td><td>같은 공유기·같은 와이파이인지(손님용 와이파이·AP 격리·VPN 은 안 됩니다). 서버 PC 에서 VPN 이 켜져 있으면 끄기.</td></tr>
+    <tr><td>어제는 됐는데 오늘은 안 돼요</td><td>주소가 바뀐 경우가 많아요 → <b>공유 창을 다시 열어 새 QR</b>.</td></tr>
+    <tr><td>공유 창에 “이 PC 에서만 열려요”</td><td>이 PC 의 네트워크 주소를 못 찾은 것(네트워크 미연결, <code>EDULET_HOST=127.0.0.1</code>, Docker). 네트워크에 연결하고 다시 열기.</td></tr>
+    <tr><td>수업 중 모두 끊겼어요</td><td>서버 창이 닫혔거나 PC 가 절전에 들어간 것. <code>run.cmd</code> 를 다시 켜고(데이터는 그대로), 설정 → 전원에서 수업 중 절전 안 함.</td></tr>
+    <tr><td>보드가 비어 있어요</td><td>GitHub Pages <b>데모</b> 주소로 열었을 가능성. 데모는 그 브라우저 안에서만 동작해 다른 기기와 공유되지 않습니다. 서버 모드 주소(<code>http://…:3000</code>)로 여세요.</td></tr>
+  </table>
+
+  <h2>4. 알아 두기</h2>
+  <ul>
+    <li><b>권한</b>: 공유 창에서 <b>공개 범위</b>가 “링크가 있는 누구나”여야 로그인 없이 들어오고, <b>링크 권한</b>(댓글 달기/글쓰기)으로 올릴 수 있는 범위를 정합니다.</li>
+    <li><b>데이터</b>: 서버 폴더의 <code>data</code> 안에 저장됩니다(보드·글·사진). 수업 후 이 폴더를 복사해 두면 백업입니다. 끝낼 때는 서버 창을 닫으세요.</li>
+    <li><b>입장 폭주</b>: 한꺼번에 많이 들어오면 “N초 뒤에 자동으로 다시 시도해요”가 뜨고 알아서 입장합니다.</li>
+  </ul>
+  <details>
+    <summary>다른 건물·집에서도 접속하게 하려면(인터넷 공개, 선택)</summary>
+    <p>서로 다른 네트워크에서 쓰려면 바깥에서 열 수 있는 주소가 필요합니다. Cloudflare Tunnel·ngrok 같은 <b>터널</b>로 3000 포트를 열거나 클라우드/학교 서버에 Docker 로 올리고, 서버에 그 주소를 알려 주세요.</p>
+    <pre>EDULET_PUBLIC_URL=https://edulet.example.com
+EDULET_TRUST_PROXY=1
+EDULET_COOKIE_SECURE=1</pre>
+    <p>(Windows 명령 프롬프트는 줄마다 <code>set 이름=값</code> 한 뒤 <code>npm start</code>.) 인터넷에 공개하면 누구나 링크로 들어올 수 있으니 <b>공개 범위·링크 권한</b>을 꼭 확인하세요. 자세한 설정은 저장소 README 의 “다른 PC 와 함께 쓰기”.</p>
+  </details>
+
+  <p class="foot">Edulet · 이 안내서는 한 파일(<code>docs/server-mode.html</code>)로 되어 있어 내려받아 브라우저로 열거나 인쇄해도 됩니다.</p>
+</main>
+</body>
+</html>

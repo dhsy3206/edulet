@@ -5,6 +5,8 @@ import { api } from '../lib/api.js';
 import { modal, toast, icon, avatar, qr, copyText, confirmDialog } from '../lib/ui.js';
 import { qrMatrix } from '../../vendor/qrcode.js';
 import { LINK_ACCESS, LINK_ACCESS_LABELS, ROLES, ROLE_LABELS } from '../lib/constants.js';
+import { shareInfo } from '../lib/share-origin.js';
+import { store } from '../lib/store.js';
 import { boardUrl, reportError, isMember } from './common.js';
 import { requireLogin } from './auth.js';
 import { duplicateBoard } from './board-actions.js';
@@ -37,9 +39,36 @@ function downloadQrPng(text, slug) {
 }
 
 /* ───────── section 1: link ───────── */
+// Where the "run it on your own server" instructions live (the demo and the localhost warning point here).
+const README_SHARE_URL = 'https://github.com/dhsy3206/edulet#다른-pc-와-함께-쓰기';
+const readmeLink = () => h('a', { href: README_SHARE_URL, target: '_blank', rel: 'noopener noreferrer' }, 'README 의 ‘다른 PC 와 함께 쓰기’');
+
+/** A short notice under the link: kind 'demo' | 'loopback' (amber) or 'lan' (neutral). Static text only; server values never go in here. */
+function shareNote(kind, ...content) {
+  return h('p', { class: ['bp-share-note', kind !== 'lan' && 'warn'], role: 'note', dataset: { role: 'share-note', kind } }, content);
+}
+
+function notesFor(info) {
+  if (info.demo) {
+    return [shareNote('demo',
+      '이 데모는 이 브라우저 안에서만 동작해요. 다른 PC·휴대폰에서는 이 링크로 이 보드가 열리지 않아요. ',
+      '여럿이 함께 쓰려면 서버 모드로 실행해 주세요. 방법은 ', readmeLink(), '에 있어요.')];
+  }
+  if (info.source === 'lan') {
+    return [shareNote('lan', '이 주소는 같은 와이파이·유선망에 있는 다른 PC·휴대폰에서 열려요. 열리지 않으면 Windows 방화벽에서 Node.js 접근을 허용해 주세요.')];
+  }
+  if (info.source === 'here' && info.loopback) {
+    return [shareNote('loopback',
+      `지금 열린 주소(${location.host})는 이 PC 에서만 열려요. 다른 PC·휴대폰은 이 링크를 열 수 없어요. `,
+      '서버 창에 나온 ‘같은 네트워크’ 주소로 이 보드를 다시 열면 그 주소로 링크를 만들어 드려요. 자세한 방법은 ', readmeLink(), '를 보세요.')];
+  }
+  return [];
+}
+
 function linkSection(ctl, admin) {
   const slug = ctl.slug;
-  const url = boardUrl(slug);
+  let pick = null; // the LAN address chosen in THIS dialog (never stored: the next dialog starts from the server's first one)
+  let url = boardUrl(slug, pick);
   const urlInput = h('input', { class: 'input', type: 'text', name: 'url', readOnly: true, value: url, 'aria-label': '보드 링크', onFocus: (e) => e.target.select() });
   const copyBtn = h('button', { type: 'button', class: 'btn btn-primary', 'aria-label': '링크 복사' }, icon('copy', { size: 18 }), h('span', null, '복사'));
   let copyTimer;
@@ -52,12 +81,44 @@ function linkSection(ctl, admin) {
     copyTimer = setTimeout(() => (copyBtn.querySelector('span').textContent = '복사'), 1800);
   });
 
-  const qrEl = qr(url);
-  const qrBox = h('div', { class: 'bp-share-qr' },
-    h('div', { class: 'bp-share-qrbox' }, qrEl || h('p', { class: 'muted' }, '주소가 너무 길어 QR을 만들지 못했어요.')),
-    h('div', { class: 'bp-share-qrside' },
-      h('p', { class: 'muted' }, '휴대폰 카메라로 스캔하면 바로 열려요. 교실 화면에 띄워 두기에 좋아요.'),
-      qrEl ? h('button', { type: 'button', class: 'btn btn-secondary btn-sm', onClick: () => downloadQrPng(url, slug) }, icon('download', { size: 16 }), 'QR 저장(PNG)') : null));
+  // several network cards → let the teacher pick the address the students' devices can reach (options are text nodes)
+  // (rebuilt by paintHosts: the addresses can change while the dialog or the page is open — see refreshAddresses)
+  const hostSlot = h('div', { class: 'bp-share-hostslot' });
+  function paintHosts() {
+    const info = shareInfo(pick);
+    if (pick && !info.lan.includes(pick)) pick = null; // the card that was chosen is gone (the network changed)
+    if (info.lan.length < 2) return hostSlot.replaceChildren();
+    const hostSel = h('select', { class: 'select', name: 'shareHost', 'aria-label': '공유할 주소', dataset: { role: 'share-host' } },
+      info.lan.map((a) => h('option', { value: a }, a)));
+    hostSel.value = info.base;
+    hostSel.addEventListener('change', () => {
+      pick = hostSel.value;
+      render();
+    });
+    hostSel.setAttribute('aria-describedby', 'bp-share-host-hint');
+    hostSlot.replaceChildren(h('div', { class: 'bp-share-host' },
+      h('label', { class: 'field' }, h('span', { class: 'label' }, '공유할 주소'), hostSel),
+      h('p', { class: 'hint', id: 'bp-share-host-hint' }, '이 PC 에 네트워크 연결이 여러 개라 주소가 여럿이에요. 함께 쓸 사람과 같은 네트워크의 주소를 골라 주세요.')));
+  }
+  paintHosts();
+
+  const notesBox = h('div', { class: 'bp-share-notes', 'aria-live': 'polite' });
+  const qrBox = h('div', { class: 'bp-share-qr' });
+  function render() {
+    const info = shareInfo(pick);
+    url = boardUrl(slug, pick);
+    urlInput.value = url;
+    notesBox.replaceChildren(...notesFor(info));
+    const qrEl = qr(url);
+    qrBox.replaceChildren(
+      h('div', { class: 'bp-share-qrbox' }, qrEl || h('p', { class: 'muted' }, '주소가 너무 길어 QR을 만들지 못했어요.')),
+      h('div', { class: 'bp-share-qrside' },
+        h('p', { class: 'muted' }, info.demo
+          ? '스캔하면 데모 사이트가 열려요. 이 보드의 내용은 이 브라우저에만 있어서 다른 기기에서는 보이지 않아요.'
+          : '휴대폰 카메라로 스캔하면 바로 열려요. 교실 화면에 띄워 두기에 좋아요.'),
+        qrEl ? h('button', { type: 'button', class: 'btn btn-secondary btn-sm', onClick: () => downloadQrPng(url, slug) }, icon('download', { size: 16 }), 'QR 저장(PNG)') : null));
+  }
+  render();
 
   const visSel = h('select', { class: 'select', name: 'visibility', 'aria-label': '공개 범위' },
     h('option', { value: 'private' }, '비공개 — 구성원만'), h('option', { value: 'link' }, '링크가 있는 누구나'));
@@ -94,12 +155,19 @@ function linkSection(ctl, admin) {
   const el = h('section', { class: 'bp-share-sec', id: 'bp-share-link', dataset: { section: 'link' } },
     h('h3', null, '링크로 공유'),
     h('div', { class: 'bp-share-linkrow' }, urlInput, copyBtn),
+    hostSlot,
+    notesBox,
     qrBox,
     h('div', { class: 'bp-share-access' },
       h('label', { class: 'field' }, h('span', { class: 'label' }, '공개 범위'), visSel),
       h('label', { class: 'field' }, h('span', { class: 'label' }, '링크로 들어온 사람의 권한'), accSel),
       note));
-  return { el, sync, destroy: () => clearTimeout(copyTimer) };
+  /** Re-read the addresses and rebuild the picker, the link and the QR code (the network address of a Wi-Fi PC can change at any time). */
+  function refreshAddresses() {
+    paintHosts();
+    render();
+  }
+  return { el, sync, refreshAddresses, destroy: () => clearTimeout(copyTimer) };
 }
 
 /* ───────── section 2: members (admin) ───────── */
@@ -277,9 +345,21 @@ export function openSharePanel(ctl, { section = 'link' } = {}) {
     if (members && ev.type === 'snapshot') members.refresh();
   });
 
+  // A teacher's Wi-Fi address can change while the page stays open (reconnect, sleep, a new router lease). The dialog was just painted
+  // from the config loaded earlier, so read it again now and, if the addresses differ, rebuild the link and QR code with the current ones.
+  let closed = false;
+  const addressesNow = () => JSON.stringify((store.config && store.config.share) || null);
+  const seen = addressesNow();
+  store.refreshConfig().then(() => {
+    if (closed || addressesNow() === seen) return;
+    link.refreshAddresses();
+    toast('이 PC 의 네트워크 주소가 바뀌어서 링크와 QR 을 새 주소로 다시 만들었어요.');
+  });
+
   m = modal({
     title: '공유', size: 'md', body,
     onClose: () => {
+      closed = true;
       unsub();
       parts.forEach((p) => p.part.destroy && p.part.destroy());
     },

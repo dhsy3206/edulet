@@ -7,9 +7,9 @@
 | 명령 | 뜻 |
 |---|---|
 | `npm start` | 서버(포트 3000). 처음엔 시드 보드 1개(`/b/practice`) |
-| `npm test` | 단위·통합(브라우저 불필요, 약 30초). **303개** |
-| `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **64개** |
-| `npm run build:pages` · `npm run e2e:pages` | GitHub Pages 정적 데모 빌드(`dist/`, gitignore) · 그 빌드를 `/edulet/` 아래 정적 서버로 띄워 확인. **86개** |
+| `npm test` | 단위·통합(브라우저 불필요, 약 30초). **327개** |
+| `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **111개** (`node e2e/run.mjs S8` 처럼 시나리오 이름으로 골라 돌릴 수 있다) |
+| `npm run build:pages` · `npm run e2e:pages` | GitHub Pages 정적 데모 빌드(`dist/`, gitignore) · 그 빌드를 `/edulet/` 아래 정적 서버로 띄워 확인. **97개** |
 
 Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs --base /edulet`(안 붙이면 `/edulet` 이 경로로 바뀐다). 푸시는 `env -u GITHUB_TOKEN git push`(환경변수 토큰이 키링을 가린다). `main` 에 푸시하면 `pages.yml` 이 데모를 배포한다. CI(`ci.yml`)는 `npm test` 만 돌린다 — e2e 는 CI 에서 안 돈다(Chrome 경로 미검증).
 
@@ -32,6 +32,13 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 - 테스트는 진짜 Google 이 아니라 **`test/google-mock.js`**(가짜 Google + 브라우저식 리디렉션 워커)로 한다: `test/google.test.js`(52개), `e2e/run.mjs` 의 S7. 다른 곳에서 Google 을 흉내 낼 땐 `createApp({ googleEndpoints, config })`(테스트 전용 옵션).
 - **진짜 Google 계정으로는 시험하지 못했다**(클라이언트 ID 없음). 켠 뒤 한 번 로그인해 보는 것이 남은 검증이다.
 - 사용자 JSON 의 `hasPassword`·`googleEmail` 은 `/auth/*` 응답(본인)에만 있다. 다른 사람에게 가는 JSON 에 새 칸을 넣을 땐 `userJson` 이 고르는 칼럼만 나가는지 확인할 것.
+
+## 공유 주소 (`/config.share`)
+
+- 서버 `GET /api/config` 의 `share: { origin, lan }`(`origin` = `PUBLIC_URL` 원점 또는 null, `lan` = 같은 네트워크 기기가 열 수 있는 주소들 — localhost 로 연 이 PC 의 소유자에게만 채워진다; 규칙·시험은 CONTRACT `/config`). 프런트 `public/js/lib/share-origin.js` 의 `shareInfo()`·`shareOrigin()` 이 **http(s) 원점 형식을 검증한 뒤에만** 링크·QR 에 쓰고(`javascript:`·경로·인증정보는 무시), `boardUrl`·`postUrl`·공유 창(`views/share-panel.js`: LAN 주소 select·방화벽/localhost 경고·데모 안내 상자)이 이를 쓴다. 새 링크 만들 곳에서 `location.origin` 을 직접 쓰지 마라.
+- 데모 워커 `/config` 는 `share:{origin:null,lan:[]}` 를 낸다(`sw-auth.js`) — 데모의 링크·QR 은 다른 기기에서 안 열린다는 것을 공유 창이 알려 준다. 게스트 입장 창에는 **"이름 없이 바로 참여"**(`참여자 NNN`, `board-controller.js` `ensureIdentity`).
+- e2e S8·S8b 는 `createApp({ host:'0.0.0.0', networkInterfaces })` 로 가짜 NIC 를 주입한다. **주의: 서버가 NIC 목록에서 127.x 를 거르므로 `127.0.0.2` 는 `share.lan` 에 안 들어가고**, S8 은 이 PC 의 실제 사설 IPv4(와이파이·유선)를 "다른 PC" 주소로 대신 쓴다(INFO 한 줄) — 소유자(localhost)와 "다른 PC"(LAN 주소, 쿠키가 따로)가 서로 다른 원점이 된다. 사설 IPv4 가 없는 PC(오프라인)에서는 S8 이 `share.lan` 검사부터 줄줄이 실패한다(e2e 는 CI 에 없다 — 로컬에서 네트워크에 연결하고 돌릴 것). 공유 창은 열 때마다 `/config` 를 다시 읽어(`store.refreshConfig`, 실패하면 기존 값 유지) 무선 IP 가 바뀌어도 새 주소로 링크·QR 을 만든다. 사용자용 한 장 안내는 `docs/server-mode.html`. 공유 창의 select·안내 상자·모바일 폭·적대적 `/config`(`javascript:`·경로·인증정보)도 여기서 본다.
+- 새 게스트가 들어오면 컨트롤러가 스냅샷을 다시 받는다(`_reload`). 첫 쓰기는 그 재로딩이 끝난 뒤에 보낸다(`_identity()`) — 안 그러면 쓰기보다 먼저 요청해 새 카드가 들어 있지 않은 스냅샷이 쓰기 응답보다 늦게 도착해 방금 쓴 카드가 자기 화면에서 지워지는 경합이 있었다(S8 의 "느린 스냅샷" 시험이 잡는다).
 
 ## 열린 결정·알려진 빈칸
 

@@ -1,5 +1,6 @@
 // Small shared helpers for the board canvas (no DOM-building of user data here).
 import { withBase } from '../lib/base.js';
+import { shareOrigin } from '../lib/share-origin.js';
 
 /* ───────── text emptiness (UX-09) ───────── */
 // Zero-width / bidi-control characters render as nothing: a title made only of them must count as empty.
@@ -141,7 +142,7 @@ export function placeSig(p) {
 }
 
 export function postUrl(slug, id) {
-  return `${location.origin}${withBase(`/b/${encodeURIComponent(slug)}/p/${id}`)}`;
+  return `${shareOrigin()}${withBase(`/b/${encodeURIComponent(slug)}/p/${id}`)}`;
 }
 
 export function fileExt(name) {

@@ -2,6 +2,7 @@
 import { h } from '../lib/h.js';
 import { router } from '../lib/router.js';
 import { withBase } from '../lib/base.js';
+import { shareOrigin } from '../lib/share-origin.js';
 import { toast, icon } from '../lib/ui.js';
 import { WALLPAPERS, DARK_WALLPAPERS } from '../lib/constants.js';
 import { cachedTone } from '../board/tone.js';
@@ -42,7 +43,8 @@ export const isGuest = (u) => !!(u && u.isGuest);
 export const isMember = (u) => !!u && !u.isGuest;
 
 export const boardPath = (slug) => '/b/' + encodeURIComponent(slug);
-export const boardUrl = (slug) => location.origin + withBase(boardPath(slug));
+/** Link to a board that other people can open: built on shareOrigin() (the LAN/public address, not a bare "localhost"). `pick` = a LAN address chosen in the share dialog. */
+export const boardUrl = (slug, pick) => shareOrigin(pick) + withBase(boardPath(slug));
 
 /**
  * Wallpaper → { cls, style, dark, id }. Custom uploads ("/uploads/…") become a background-image; their chrome tone

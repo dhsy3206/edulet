@@ -16,6 +16,7 @@ import { registerComments } from './comments.js';
 import { registerReactions } from './reactions.js';
 import { registerUploads } from './uploads.js';
 import { PreviewService, registerPreview } from './preview.js';
+import { defaultNetworkInterfaces, shareInfo, startupLanLine } from './share.js';
 import { serveStatic } from './static.js';
 import { loadSeedSpecs, runSeed } from './seed.js';
 
@@ -117,7 +118,8 @@ async function dispatch(app, req, res) {
  * @param {boolean|string|number} [opts.seed] auto | on | off
  * Internal / test-only (never read from env or HTTP): config, quiet, publicDir, seedDir, authRateLimit, pingMs, presenceMinMs,
  * allowPrivatePreviewHosts (true | ['host:port']), previewFetcher, previewDnsLookup, previewLimits, uploadIdleMs, uploadGcMaxAgeMs,
- * googleEndpoints ({ auth, token, timeoutMs, exchangesPerMinute } — a stand-in for Google's two OAuth addresses).
+ * googleEndpoints ({ auth, token, timeoutMs, exchangesPerMinute } — a stand-in for Google's two OAuth addresses),
+ * networkInterfaces (a function shaped like os.networkInterfaces — fake NICs for the `share.lan` list of GET /config).
  */
 export async function createApp(opts = {}) {
   const config = loadConfig(opts);
@@ -139,6 +141,7 @@ export async function createApp(opts = {}) {
     serveUpload: null,
     uploadIdleMs: opts.uploadIdleMs, // test-only: how long an upload body may stall (default 30 s)
     googleEndpoints: opts.googleEndpoints ?? null, // test-only: where "Google" lives (default: the real accounts.google.com / oauth2.googleapis.com)
+    networkInterfaces: typeof opts.networkInterfaces === 'function' ? opts.networkInterfaces : defaultNetworkInterfaces, // test-only: this machine's NICs
   };
   app.hub = new Hub(app, { pingMs: opts.pingMs ?? 25000, presenceMinMs: opts.presenceMinMs ?? 1000 });
   app.preview = new PreviewService({
@@ -151,12 +154,13 @@ export async function createApp(opts = {}) {
   });
 
   app.router.add('GET', '/health', async () => ({ ok: true }));
-  app.router.add('GET', '/config', async () => ({
+  app.router.add('GET', '/config', async (c) => ({
     allowRegister: config.allowRegister,
     maxUploadMb: config.maxUploadMb,
     linkPreview: config.linkPreview,
     google: googleEnabled(app),
     googleDomains: googleEnabled(app) ? config.googleDomains : [],
+    share: shareInfo(app, c.req),
     version: app.version,
   }));
   registerAuth(app);
@@ -224,13 +228,20 @@ const isMain = (() => {
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
 })();
 
-if (isMain) {
-  const running = await createApp();
-  console.log(`Edulet is running at ${running.url}`);
+/** What `npm start` prints: the local address, the LAN hint (when the server is reachable beyond this PC), the seed boards. */
+export function announce(running, log = console.log) {
+  log(`Edulet is running at ${running.url}`);
+  const lan = startupLanLine(running.app, running.port);
+  if (lan) log(lan);
   const slugs = loadSeedSpecs(running.app.seedDir).map((s) => s.spec.board.slug);
   for (const slug of slugs) {
-    if (running.db.get('SELECT 1 AS x FROM boards WHERE slug = ?', slug)) console.log(`  ${running.url}/b/${slug}`);
+    if (running.db.get('SELECT 1 AS x FROM boards WHERE slug = ?', slug)) log(`  ${running.url}/b/${slug}`);
   }
+}
+
+if (isMain) {
+  const running = await createApp();
+  announce(running);
   const stop = async () => { await running.close(); process.exit(0); };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
