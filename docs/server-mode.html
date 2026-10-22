@@ -86,10 +86,33 @@
     <tr><th>하고 싶은 일</th><th>방법</th></tr>
     <tr><td>다시 켜기</td><td><code>run.cmd</code> 를 더블클릭. 보드·글·사진·교사 계정이 그대로이고, 교사 로그인은 30일 동안 유지됩니다.</td></tr>
     <tr><td>학생 다시 입장</td><td>와이파이 주소가 바뀌었을 수 있어요 → 교사 PC 에서 <b>공유 창을 다시 열어 새 QR</b>. 보드 이름(<code>/b/…</code>)은 그대로입니다.</td></tr>
-    <tr><td>백업</td><td>서버 창을 <b>닫은 뒤</b> <code>data</code> 폴더 <b>전체</b>를 USB·클라우드에 복사. (켜 둔 채 파일 하나만 복사하면 최근 변경이 빠져요.) 끌 때는 서버 창을 닫아 정상 종료하는 것이 가장 안전합니다.</td></tr>
-    <tr><td>복원 · 다른 PC 로 옮기기</td><td>Node.js 가 있는 PC 에 프로그램과 <code>data</code> 폴더를 두고 <code>run.cmd</code>. 데이터를 다른 위치에 두려면 환경변수 <code>EDULET_DATA_DIR</code> 로 폴더를 지정하세요.</td></tr>
+    <tr><td>백업</td><td><b><code>backup.cmd</code> 를 더블클릭</b> — <b>서버를 켠 채로 해도 됩니다</b>(수업 중에도 안전해요). 프로그램 폴더 안에 <code>backups\edulet-날짜-시간</code> 폴더가 새로 생기고, 그 폴더를 USB·클라우드에 복사해 두면 됩니다. 원본 <code>data</code> 는 읽기만 하고 바꾸지 않아요. 폴더 안 <code>BACKUP-INFO.txt</code> 에 보드·글·사진 개수와 복원 방법이 적혀 있습니다. 끝나면 <b>“가장 최근 글” 시각</b>이 방금까지의 작업과 맞는지 한 번 봐 주세요. (서버 창을 <b>닫은 뒤</b> <code>data</code> 폴더 <b>전체</b>를 복사해도 같은 효과예요.)<br>
+      <b>결과 읽는 법</b>: 마지막에 <code>Backup FAILED</code> 면 <b>실패</b>(만들던 폴더는 지워지고 원본은 그대로) · <code>Backup finished WITH WARNINGS</code> 면 백업은 만들어졌지만 <b>일부 파일이 빠졌을 수 있어요</b>(위쪽 “경고” 줄을 읽어 보세요) · 경고 없이 끝나면 완전한 백업입니다. 프로그램으로 부르는 경우 종료 코드는 <b>0 = 완전 · 1 = 실패 · 2 = 경고 있음</b>.<br>
+      <b>이름 끝에 <code>.partial</code> 이 붙은 폴더</b>(<code>edulet-….partial</code>)는 백업이 중간에 끊긴 것(창을 닫거나 전원이 나간 경우)이니 <b>쓰지 말고 지워도 됩니다</b>. 정상 이름의 폴더는 끝까지 만들어 확인을 마친 것만 있어요.</td></tr>
+    <tr><td>복원 · 다른 PC 로 옮기기</td><td>아래 <b>복원 방법</b>대로 백업 폴더의 <code>edulet.db</code> 와 <code>uploads</code> 를 새 <code>data</code> 폴더에 넣고 <code>run.cmd</code>. 프로그램과 <code>data</code> 폴더를 통째로 옮겨도 됩니다(Node.js 가 있는 PC). 데이터를 다른 위치에 두려면 환경변수 <code>EDULET_DATA_DIR</code> 로 폴더를 지정하세요.</td></tr>
     <tr><td>보드별 기록 남기기</td><td>공유 창 → <b>내보내기·복제</b> → JSON·CSV 로 내려받기(읽기·엑셀용, <b>다시 불러오기는 안 돼요</b> — 복원은 <code>data</code> 폴더로). 같은 서버 안에서 보드를 통째로 복사하는 것은 <b>복제</b>입니다.</td></tr>
   </table>
+  <div class="box ip">
+    <h3>⚠ 서버가 켜져 있을 때 <code>edulet.db</code> 만 복사하면 비어 있거나 낡은 백업이 됩니다</h3>
+    <p>서버가 켜진 동안 <code>edulet.db</code> 는 <b>낡은 값</b>입니다(비어 있거나 최근 작업이 빠진 파일). 방금까지의 작업은 <code>edulet.db-wal</code> 에 쌓여 있고, <code>edulet.db</code> 만 복사하면 그 작업이 <b>빠진 백업</b>이 됩니다. 폴더 <b>통째로(서버를 끈 뒤)</b> 복사하거나, <b><code>backup.cmd</code></b> 를 쓰세요.</p>
+    <ul>
+      <li><code>backup.cmd</code> 는 이 프로그램 폴더의 <code>data</code> 를 백업합니다. <b>서버를 켤 때 <code>EDULET_DATA_DIR</code> 를 썼다면 <code>backup.cmd</code> 를 실행하는 창에도 같은 환경변수가 필요해요</b>(<code>setx</code> 로 고정했다면 둘 다 자동). 그렇지 않으면 이 폴더에 남아 있는 <b>옛 <code>data</code></b> 를 “성공”으로 백업합니다 — 서버를 <b>다른 폴더에서 켠</b> 경우도 같아요. 이럴 땐 <code>backup.cmd --data "그폴더\data"</code> 로 알려 주세요.</li>
+      <li>그래서 백업이 끝나면 <b>원본 폴더 · 가장 최근 글 시각 · 원본 WAL 마지막 수정 시각</b>을 보여 줍니다. 방금 쓴 글의 시각과 다르거나 “글이 하나도 없어요” 경고가 나오면 <b>엉뚱한 <code>data</code></b> 를 백업한 것이니 위처럼 폴더를 지정해 다시 하세요. 그 <code>data</code> 가 없으면 “data 폴더를 찾을 수 없어요”라고 알려 주고 아무것도 만들지 않습니다.</li>
+      <li>사진·파일이 든 <code>uploads</code> 폴더를 다른 드라이브로 옮겨 바로가기(링크)로 연결했어도 그대로 따라가서 백업하고, 그렇다고 알려 줍니다(경고로 취급 — 종료 코드 2). 업로드 파일 <b>하나</b>가 바로가기이거나 다른 프로그램이 잠그고 있으면 그 파일만 건너뛰고 알려 줍니다.</li>
+      <li>아직 <b>“게시하기”를 누르지 않은 작성 중인 글</b>은 그 브라우저 메모리에만 있어서 서버에도, 백업에도 담기지 않아요.</li>
+    </ul>
+  </div>
+  <div class="box">
+    <h3>복원 방법 <small style="font-weight:400">(<code>BACKUP-INFO.txt</code> 에도 같은 내용이 있어요)</small></h3>
+    <p><b><code>BACKUP-INFO.txt</code> 가 있는 정상 이름(<code>edulet-날짜-시간</code>)의 폴더만 쓰세요.</b> 이름 끝에 <code>.partial</code> 이 붙은 폴더는 중간에 끊긴 것이니 쓰지 말고 지워도 됩니다.</p>
+    <ol>
+      <li>서버를 끕니다(서버 창을 닫기).</li>
+      <li>지금의 <code>data</code> 폴더를 따로 옮겨 둡니다(지우지 말고 이름만 바꾸거나 다른 곳으로).</li>
+      <li>새 <code>data</code> 폴더를 만들고, 백업 폴더의 <code>edulet.db</code> 와 <code>uploads</code> 폴더를 그 안에 복사합니다.</li>
+      <li>새 <code>data</code> 폴더에 옛 <code>edulet.db-wal</code> · <code>edulet.db-shm</code> 파일이 있으면 <b>반드시 지웁니다</b>. (남아 있으면 다른 데이터베이스의 WAL 이 복원본에 다시 적용돼 데이터가 망가질 수 있어요.)</li>
+      <li><code>run.cmd</code> 로 서버를 켭니다. 다른 위치의 <code>data</code> 폴더를 쓰려면 환경변수 <code>EDULET_DATA_DIR</code> 로 그 폴더를 지정하세요.</li>
+    </ol>
+  </div>
   <div class="box ip">
     <h3>⚠ 켰더니 보드가 사라졌어요 (빈 화면)</h3>
     <p>데이터는 <b>서버를 시작한 폴더</b> 기준의 <code>data</code> 에 만들어집니다. <code>run.cmd</code> 는 항상 자기 폴더에서 시작하도록 고쳐져 있지만, <code>node server\index.js</code> 를 다른 폴더에서 직접 켜거나 <b>예전 판 <code>run.cmd</code></b> 를 바로가기·작업 표시줄·작업 스케줄러로 켰다면 그 폴더에 <b>새 빈 <code>data</code></b> 가 생겼을 수 있습니다. 원래 <code>data</code> 는 지워지지 않고 그대로 있어요.</p>

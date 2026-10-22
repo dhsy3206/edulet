@@ -64,6 +64,25 @@ EDULET_PUBLIC_URL=https://edulet.example.com EDULET_TRUST_PROXY=1 EDULET_COOKIE_
 
 > **GitHub Pages 데모는 이 방법으로 다른 기기와 공유할 수 없습니다.** 데모는 서버 없이 방문자 **브라우저 안**(서비스 워커 + IndexedDB)에서만 돌아서, 보드와 글이 그 브라우저에만 있습니다. 데모의 공유 창에 링크·QR 이 보여도 다른 PC·휴대폰에서 열면 그 보드가 없습니다(공유 창에도 같은 안내가 나옵니다). 여럿이 함께 쓰려면 위처럼 서버를 켜세요.
 
+## 백업과 복원
+
+데이터(보드·글·계정·업로드 파일)는 모두 `data` 폴더에 있습니다. **서버를 켜 둔 동안 `data\edulet.db` 는 낡은 값**(비어 있거나 최근 작업이 빠진 파일)이고 최근 작업은 `edulet.db-wal` 에 쌓여 있어서, **켜 둔 채 `edulet.db` 만 복사하면 그 작업이 빠진 백업**이 됩니다. 서버를 끄지 않고 백업하려면:
+
+```bash
+backup.cmd                                  # Windows: 더블클릭 (서버를 켠 채로 해도 안전)
+node tools/backup.mjs [--data <폴더>] [--out <폴더>]
+```
+
+- `backups\edulet-YYYYMMDD-HHMMSS\` 폴더가 새로 생기고 `edulet.db`(WAL 안의 최신 내용까지 담은 하나의 파일), `uploads\`(올라온 파일), `BACKUP-INFO.txt`(만든 시각·개수·**복원 방법**)가 들어갑니다. 같은 초에 또 하면 `-2`, `-3`.
+- **정상 이름의 폴더는 끝까지 만들어 확인을 마친 것만 있습니다.** 작업은 `edulet-….partial` 폴더에서 하고 마지막에 이름을 바꾸므로, **이름 끝에 `.partial` 이 붙은 폴더는 중간에 끊긴 것**(창 닫기·전원 차단)이니 쓰지 말고 지워도 됩니다(자동으로 지우지는 않습니다).
+- **원본은 읽기만 합니다**(SQLite `VACUUM INTO` — 서버가 읽고 쓰는 중에도 한 시점의 일관된 스냅샷). 단 서버가 꺼진 `data` 를 읽으면 SQLite 가 빈 `edulet.db-wal`·`edulet.db-shm` 을 새로 만들 수 있습니다(`edulet.db` 는 그대로, 다음 서버 시작이 알아서 씁니다). 만든 백업은 `integrity_check` 로 확인하고, 하나라도 어긋나면 그 백업 폴더만 지우고 실패로 끝냅니다.
+- **종료 코드** `0` 완전한 백업 · `1` 실패(만들던 폴더는 지움) · `2` 백업은 만들었지만 경고가 있음(일부 파일이 빠졌을 수 있음 — 폴더는 남고, 화면 맨 위에 "주의:" 가 나옵니다). `backup.cmd` 는 끝에 각각 아무 말 없음 · `Backup FAILED` · `Backup finished WITH WARNINGS` 를 보여 줍니다.
+- **엉뚱한 `data` 를 백업하지 않았는지** 끝날 때 보여 주는 `원본 폴더 · 가장 최근 글 · 원본 WAL 마지막 수정` 으로 확인하세요(글이 하나도 없으면 경고). `--data` 기본값은 환경변수 `EDULET_DATA_DIR`, 없으면 **이 저장소의 `data`** 입니다 — 서버의 `./data`(= 서버를 시작한 폴더 기준)와 일부러 다릅니다. **서버를 `EDULET_DATA_DIR` 로 켰다면 `backup.cmd` 를 실행하는 쪽에도 같은 환경변수가 필요**하고, 서버를 다른 폴더에서 켰다면 그 `data` 를 `--data` 로 알려 주세요. `--out` 기본값은 저장소의 `backups`(`.gitignore`·`.dockerignore` 에 있음 — `edulet-날짜-시간*` 폴더는 어디에 만들어도 커밋되지 않습니다. 비밀번호 해시·세션이 들어 있으니 올리지 마세요). `--out` 을 `data` 안에 둘 수는 없습니다.
+- `data\uploads` 가 다른 드라이브로 이어진 바로가기(링크·정션)면 따라가서 백업하고 경고로 알립니다. 업로드 파일 하나가 바로가기이거나 다른 프로그램이 잠그고 있으면(몇 번 다시 시도한 뒤) 그 파일만 건너뛰고 경고합니다. 오류 메시지는 한 줄이며, 자세한 스택이 필요하면 환경변수 `EDULET_DEBUG=1`.
+- **복원**: `BACKUP-INFO.txt` 가 있는 정상 이름의 폴더로 — 서버를 끄고 → 지금의 `data` 폴더를 따로 옮겨 두고 → 새 `data` 폴더에 백업의 `edulet.db` 와 `uploads` 를 복사하고 → **그곳에 옛 `edulet.db-wal`·`edulet.db-shm` 이 있으면 반드시 지운 뒤**(남아 있으면 다른 데이터베이스의 기록이 복원본에 재생돼 손상됩니다) → `run.cmd`. 자세한 안내는 [`docs/server-mode.html`](docs/server-mode.html) 4번.
+- 아직 "게시하기"를 누르지 않은 작성 중인 글은 브라우저 메모리에만 있어 백업에 담기지 않습니다.
+- Docker 이미지에는 `tools` 가 들어 있지 않습니다(`.dockerignore`). 컨테이너를 **멈춘 뒤** 볼륨의 `data` 를 복사하세요.
+
 ## GitHub Pages 데모 모드
 
 **https://dhsy3206.github.io/edulet/** — 서버를 켜지 않고 바로 써 볼 수 있는 정적 데모입니다. GitHub Pages 는 파일만 내려 주고 Node 서버를 돌릴 수 없으므로, 이 빌드에서는 **서비스 워커가 서버 역할**(같은 API 계약, `public/edulet-sw.js` + `public/demo/`)을 하고 데이터는 **방문자 브라우저의 IndexedDB** 에 저장됩니다.
@@ -106,7 +125,7 @@ EDULET_PUBLIC_URL=https://edulet.example.com EDULET_TRUST_PROXY=1 EDULET_COOKIE_
 | 이름 | 기본값 | 설명 |
 |---|---|---|
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | 접속 주소 |
-| `DATA_DIR` | `./data` | DB(`edulet.db`)와 업로드 파일 위치 — **백업은 이 폴더만**(서버를 끈 뒤 폴더 통째로 복사). `./data` 는 **서버를 시작한 폴더 기준**이라 `run.cmd` 는 먼저 자기 폴더로 이동해 시작합니다. `node server\index.js` 를 다른 폴더에서 직접 켜면 그 폴더에 새 빈 `data` 가 생기니, 위치를 고정하려면 절대 경로를 넣으세요(예: `EDULET_DATA_DIR=D:\EduletData`). 껐다 켠 뒤 이어 쓰기·백업·복원은 [`docs/server-mode.html`](docs/server-mode.html) 4번 |
+| `DATA_DIR` | `./data` | DB(`edulet.db`)와 업로드 파일 위치 — **백업은 이 폴더만**(서버를 켠 채로는 `backup.cmd`, 끈 뒤에는 폴더 통째로 복사 — [백업과 복원](#백업과-복원)). `./data` 는 **서버를 시작한 폴더 기준**이라 `run.cmd` 는 먼저 자기 폴더로 이동해 시작합니다. `node server\index.js` 를 다른 폴더에서 직접 켜면 그 폴더에 새 빈 `data` 가 생기니, 위치를 고정하려면 절대 경로를 넣으세요(예: `EDULET_DATA_DIR=D:\EduletData`). 껐다 켠 뒤 이어 쓰기·백업·복원은 [`docs/server-mode.html`](docs/server-mode.html) 4번 |
 | `SEED` | `auto` | `auto` = DB 가 비었을 때만 데모 보드 생성, `0` = 끄기, `1` = 항상 |
 | `ALLOW_REGISTER` | `1` | `0` 이면 가입 막기(기존 계정·게스트만 — Google 로 새로 가입하는 것도 막힙니다) |
 | `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` | 없음 | **둘 다 있으면** 로그인 창에 "Google 계정으로 계속하기"가 나타납니다 → [아래](#google-로그인-켜기) |
@@ -159,7 +178,7 @@ public/   프런트 — js/lib(공용 기반·BoardController) js/views(앱 셸�
           edulet-sw.js · demo/  Pages 데모용 서비스 워커 "서버"(IndexedDB 저장)와 부팅 스크립트
 seed/     데모 보드 JSON + 이미지
 test/     서버 테스트(node:test)      e2e/  브라우저 수락 시나리오(run.mjs 서버 모드 · pages.mjs 데모 모드)
-tools/    cdp.mjs(크롬 구동기) · build-pages.mjs(정적 사이트 빌드) 등
+tools/    cdp.mjs(크롬 구동기) · build-pages.mjs(정적 사이트 빌드) · backup.mjs(안전한 온라인 백업) 등
 docs/     CONTRACT.md(서버↔프런트 계약)
 ```
 
@@ -168,7 +187,7 @@ docs/     CONTRACT.md(서버↔프런트 계약)
 ## 테스트
 
 ```bash
-npm test         # 서버 단위·통합 테스트 (의존성·브라우저 불필요, 약 15초)
+npm test         # 서버 단위·통합 테스트 (의존성·브라우저 불필요, 약 30초)
 npm run e2e      # 실제 크롬 여러 개로 실시간·형식 전환·드래그 이동 등 (Chrome/Edge 필요, CHROME_PATH 로 지정 가능)
 npm run e2e:pages  # Pages 데모 빌드를 /edulet/ 아래 정적 서버로 띄워 서비스 워커 부팅·탭 간 동기화·업로드·초기화 등 확인
 ```

@@ -7,7 +7,8 @@
 | 명령 | 뜻 |
 |---|---|
 | `npm start` | 서버(포트 3000). 처음엔 시드 보드 1개(`/b/practice`) |
-| `npm test` | 단위·통합(브라우저 불필요, 약 30초). **327개** |
+| `npm test` | 단위·통합(브라우저 불필요, 약 50초). **379개** |
+| `backup.cmd` · `node tools/backup.mjs [--data <dir>] [--out <dir>]` | **서버를 켠 채로** 안전한 백업(`backups/edulet-날짜-시간/`: `edulet.db` 스냅샷·`uploads/`·`BACKUP-INFO.txt`). 계약 CONTRACT §1 "백업" |
 | `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **111개** (`node e2e/run.mjs S8` 처럼 시나리오 이름으로 골라 돌릴 수 있다) |
 | `npm run build:pages` · `npm run e2e:pages` | GitHub Pages 정적 데모 빌드(`dist/`, gitignore) · 그 빌드를 `/edulet/` 아래 정적 서버로 띄워 확인. **97개** |
 
@@ -23,7 +24,7 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 
 ## 구조
 
-`server/`(http.js 라우터·auth.js·google.js·boards/posts/…·realtime.js SSE·preview.js SSRF 방어·seed) · `public/js/{lib,views,board}` · `public/demo/`(Pages 워커 서버) · `seed/` · `test/`(node:test, `test/index.js` 가 `*.test.js` 를 모두 불러온다) · `e2e/{run,pages}.mjs` · `tools/{cdp,ports,build-pages}.mjs` · `docs/`. 설정은 전부 환경변수 `EDULET_*`(`server/config.js`, 표는 CONTRACT §1).
+`server/`(http.js 라우터·auth.js·google.js·boards/posts/…·realtime.js SSE·preview.js SSRF 방어·seed) · `public/js/{lib,views,board}` · `public/demo/`(Pages 워커 서버) · `seed/` · `test/`(node:test, `test/index.js` 가 `*.test.js` 를 모두 불러온다) · `e2e/{run,pages}.mjs` · `tools/{cdp,ports,build-pages,backup}.mjs` · `docs/`. 설정은 전부 환경변수 `EDULET_*`(`server/config.js`, 표는 CONTRACT §1).
 
 ## Google 로그인 (2026-10-22 추가, 서버 모드 전용)
 
@@ -54,4 +55,7 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 - e2e: 모달은 나중에 autofocus 를 옮기므로 입력 전에 `document.activeElement` 가 그 칸이 될 때까지 기다린다. 화면 아래의 **토스트가 마우스 클릭을 가로챌 수 있다** — 클릭 전에 토스트가 사라질 때까지 기다린다.
 - `api.js` 는 401 마다 "세션 만료"로 보지만 `bad_credentials`(틀린 비밀번호)는 예외다.
 - 긴 한글이 든 셸 heredoc 은 도구에서 깨지기도 한다 — 길면 파일로 쓰고 실행한다. Windows 한글 경로·파일은 UTF-8 로(`python -X utf8`).
+- **WAL 때문에 `data/edulet.db` 본파일은 서버가 켜진 동안 낡은 값(비어 있거나 최근 작업이 빠진 파일)이다** — 작업은 `edulet.db-wal` 에 있다. 켜 둔 채 본파일만 복사하면 빈·낡은 백업이므로 백업은 `tools/backup.mjs`(원본을 **읽기 전용**으로 열어 `VACUUM INTO` — `openDb`·마이그레이션·checkpoint·쓰기 금지, 서버가 꺼져 WAL 이 남은 폴더에서도 WAL 을 본파일에 합치거나 지우지 않는다; 단 꺼진 `data` 를 읽으면 SQLite 가 빈 `-wal`·`-shm` 을 새로 만들 수 있다)로만 만든다. 이 도구를 고칠 때 원본에 쓰는 길(RW 로 열기)이 생기지 않게 하고, 시험(`test/backup.test.js`: 서버 켠 채·크래시 이미지·쓰기 폭풍·`.partial`·SIGKILL·실제 `cmd.exe /c backup.cmd`)을 일부러 깨 보라.
+- **백업 결과의 신뢰 규칙**: 작업은 `edulet-….partial` 에서 하고 **마지막에 이름을 바꾼다**(정상 이름의 폴더 = 완전한 백업, `.partial` = 끊긴 것, 자동 정리 없음). CLI 종료 코드 **0 완전 / 1 실패 / 2 경고 있음**(`warnings` 가 있거나 `uploads.missing > 0` → 폴더는 남기고 "주의:" 를 먼저 찍는다) — 불완전한 백업이 성공처럼 보이면 안 된다. `data/uploads` **폴더** 링크는 따라가고(경고) 개별 파일 링크만 건너뛴다. 잠긴 업로드(EBUSY/EPERM/EACCES)는 3번 재시도 뒤 `missing`+경고. 오류는 한 줄(스택은 `EDULET_DEBUG`). 끝에 원본 경로·가장 최근 글·WAL 시각을 찍는 것은 **엉뚱한(낡은) data 를 "성공"으로 백업하는 사고**를 눈에 띄게 하려는 것이다 — 서버를 `EDULET_DATA_DIR` 로 켰다면 `backup.cmd` 쪽에도 같은 환경변수가 필요.
+- **`backups/` 와 `edulet-????????-??????*/` 는 사용자 데이터라 `.gitignore`·`.dockerignore` 에 있다**(커밋·이미지 금지 — 비밀번호 해시·세션이 들어 있다). `backup.mjs` 의 `--data` 기본값은 **이 파일 위치 기준 저장소 루트의 `data`**(또는 `EDULET_DATA_DIR`)이고 서버의 `DATA_DIR=./data` 는 **프로세스의 현재 폴더 기준**이라 일부러 다르다 — 서버를 다른 폴더에서 켰다면 `--data` 로 가리킨다. `--out` 이 data 안이면 거부. `backup.cmd` 는 `.gitattributes` 대로 CRLF 이고 **문구는 ASCII 만**(한글은 콘솔 코드페이지에서 깨진다 — 한글 메시지는 `backup.mjs` 가 낸다). **시험·실험에서 실제 `./data`(사용자의 진짜 서버 데이터)나 포트 3000 을 가리키지 마라**(임시 폴더·임의 포트만).
 - `dist/` 와 `e2e/out/`(캡처) 는 산출물이다(gitignore, 커밋하지 않는다).
