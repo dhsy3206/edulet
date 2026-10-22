@@ -4,6 +4,7 @@
   "description": "Padlet 스타일의 실시간 협업 게시판 — 교실·연수용 (의존성 0, Node 내장 SQLite)",
   "type": "module",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "engines": {
     "node": ">=22.13"
   },
