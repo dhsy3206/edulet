@@ -35,7 +35,7 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 
 ## 열린 결정·알려진 빈칸
 
-- **라이선스는 교육 목적 한정 사용자 정의 라이선스**(`LICENSE`, 2026-10-22 추가; 한국어본이 효력, 영어본은 참고). OSI 오픈소스가 아니고 변호사 검토도 받지 않았다. 저작권자 표기는 GitHub 아이디 `dhsy3206`(바꾸려면 `LICENSE` 의 Copyright 줄). 제5조가 QR 라이브러리·`seed/` 참조 보드 자료·제3자 상표를 적용 대상에서 뺀다 — 새 제3자 자료를 넣으면 제5조에도 적는다. 영리 교육업체(학원)·기업 연수는 "영리 목적/교육 목적 아님"으로 읽혀 서면 허락 대상이다.
+- **라이선스는 PolyForm Strict License 1.0.0**(`LICENSE` = 공식 영어 원문 그대로 + 맨 위 `Required Notice:` 한 줄, 2026-10-22). 비영리 목적으로 있는 그대로 쓰는 것만 허락하고 수정·배포·영리 사용은 불허. **`LICENSE` 본문은 고치지 않는다**(공식 원문과 바이트 동일). SPDX 에 Strict 항목이 없어 `package.json` 은 `SEE LICENSE IN LICENSE`. 저작권자 표기는 GitHub 아이디 `dhsy3206`(바꾸려면 Required Notice 줄). QR 라이브러리·`seed/` 참조 보드 자료·제3자 상표는 `NOTICE` 가 적용 대상에서 뺀다 — 새 제3자 자료를 넣으면 `NOTICE` 에도 적는다. 같은 날 먼저 올렸던 자체 작성 "교육 목적 한정" 라이선스(커밋 5437b22)는 이것으로 대체됐다.
 - `seed/demo-board.json`·`seed/img/` 에 참조 보드 작성자의 표시 이름과 이미지가 들어 있고 저장소가 공개라 **지금 공개 중** — 원 작성자 동의가 불확실하면 바꾸거나 지울 것.
 - 여럿이 같은 보드를 실시간으로 쓰려면 서버 모드가 필요(Pages 는 브라우저 로컬). 공개 운영: HTTPS + `TRUST_PROXY=1` + `COOKIE_SECURE=1`(또는 https `PUBLIC_URL`), 프록시의 SSE 버퍼링 끄기.
 - 고치지 않고 남긴 것: `/auth/login` 의 실패 계수가 해시 뒤에 올라가 동시 추측이 한꺼번에 통과(Google 용 `confirmPassword` 는 이미 앞에서 센다) · `test/seed.test.js` 의 직접 `createApp` 두 곳이 아직 나쁜 포트 재굴림을 안 쓴다 · 보드 탭을 6개 넘게 열면 브라우저 호스트당 연결 제한으로 지연.

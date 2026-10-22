@@ -1,155 +1,61 @@
-Edulet 교육 목적 한정 라이선스 1.0
-Edulet Educational Use License 1.0
+Required Notice: Copyright (c) 2026 dhsy3206 (https://github.com/dhsy3206/edulet)
 
-Copyright (c) 2026 dhsy3206 (https://github.com/dhsy3206/edulet)
+# PolyForm Strict License 1.0.0
 
-────────────────────────────────────────────────────────────────────────
-한국어 (이 문서의 효력은 한국어본에 따른다 — 영어본은 참고용 번역이다)
-────────────────────────────────────────────────────────────────────────
+<https://polyformproject.org/licenses/strict/1.0.0>
 
-요약 (설명용이며 아래 조항이 우선한다)
-  · 학교·교육기관·교사·학생이 가르치고 배우는 데 쓰는 것은 무료로 자유롭다.
-  · 팔거나, 요금을 받고 제공하거나, 회사 업무·영리 사업에 쓰는 것은 안 된다.
-  · 이 라이선스는 OSI 가 정의하는 "오픈소스 라이선스"가 아니다.
-    소스는 공개돼 있지만 사용 목적이 교육으로 제한된다.
+## Acceptance
 
-제1조 (용어)
-  1. "소프트웨어"란 이 저장소의 소스 코드, 문서, 설정, 테스트, 빌드 도구
-     및 이를 복제·수정한 것을 말한다. 제5조의 제외 대상은 포함하지 않는다.
-  2. "교육 목적"이란 학교(유치원·초·중·고·대학, 특수·대안학교 포함),
-     평생교육·교원 연수 기관, 교육청 등 교육행정기관, 그리고 교사·강사·학생
-     등 학습자 개인이 가르치거나 배우거나 교육 활동을 운영하기 위해
-     소프트웨어를 쓰는 것을 말한다.
-  3. "영리 목적"이란 다음 중 하나를 말한다.
-     (가) 소프트웨어나 이를 이용한 서비스의 접근·사용·지원·호스팅에 대해
-          대가를 받는 것,
-     (나) 광고·데이터 판매 등으로 소프트웨어의 사용에서 수익을 얻는 것,
-     (다) 영리 사업의 제품·서비스·업무의 일부로 쓰는 것.
+In order to get any license under these terms, you must agree to them as both strict obligations and conditions to all your licenses.
 
-제2조 (허락)
-  저작권자는 누구에게나 교육 목적에 한하여, 무상으로, 비독점적으로
-  다음을 허락한다.
-  1. 소프트웨어의 사용(설치와 자체 서버 운영 포함)
-  2. 복제
-  3. 수정(2차적 저작물 작성)
-  4. 교육 목적의 이용자에게 무상으로 배포. 다만 이 라이선스 전문과 저작권
-     고지를 함께 넣어야 하고, 수정했다면 수정했다는 사실을 밝혀야 하며,
-     받는 사람에게도 같은 조건이 적용된다.
-  이 저장소를 GitHub 의 기능 안에서 보거나 포크하는 것은 GitHub 이용약관에
-  따르며, 이 라이선스와 별개이다.
+## Copyright License
 
-제3조 (금지)
-  1. 영리 목적으로 쓰거나 제공하는 것
-  2. 교육 목적이 아닌 곳에 쓰는 것 (예: 일반 기업의 업무 협업, 고객 대상
-     서비스)
-  3. 소프트웨어를 판매하거나, 유료 호스팅·구독으로 제공하거나, 유료 상품에
-     넣는 것
-  4. 저작권 고지와 이 라이선스 전문을 지우거나 바꾸는 것
-  5. 이 라이선스보다 넓은 조건으로 다시 허락하거나 다른 라이선스로 바꾸어
-     배포하는 것
-  6. 저작권자의 이름이나 저장소 이름을 써서 저작권자가 보증·후원하는 것처럼
-     보이게 하는 것 (출처를 밝히는 사실 표시는 제외)
+The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose, other than distributing the software or making changes or new works based on the software.
 
-제4조 (별도 허락)
-  제2조 밖의 사용(영리 목적 포함)은 저작권자의 사전 서면 허락이 있어야
-  한다. 저장소(https://github.com/dhsy3206/edulet)의 Issue 로 요청한다.
+## Patent License
 
-제5조 (이 라이선스가 적용되지 않는 것)
-  다음은 저작권자의 것이 아니므로 이 라이선스로 어떤 권리도 허락하지 않는다.
-  1. public/vendor/qrcode.js — Kazuhiko Arase 의 QRCode for JavaScript (MIT).
-     public/vendor/LICENSE-qrcode.txt 의 조건을 따른다.
-  2. seed/demo-board.json 과 seed/img/ — 공개된 참조 보드를 옮긴 것으로,
-     권리는 원 권리자에게 있다. 쓰려면 원 권리자의 허락을 따로 받아야 하며,
-     저작권자는 이에 대해 아무 권리도 허락하지 않는다.
-  3. 제3자의 상표와 로고 (예: Google 과 Google "G" 로고, Padlet, QR Code).
-     각 소유자의 이용 지침을 따른다.
+The licensor grants you a patent license for the software that covers patent claims the licensor can license, or becomes able to license, that you would infringe by using the software.
 
-제6조 (보증 없음과 책임 제한)
-  소프트웨어는 "있는 그대로" 제공되며, 상품성·특정 목적 적합성·권리 침해
-  없음을 포함해 어떠한 보증도 하지 않는다. 저작권자는 소프트웨어의 사용으로
-  생긴 어떤 손해에 대해서도, 법이 허용하는 한도에서 책임지지 않는다.
+## Noncommercial Purposes
 
-제7조 (종료)
-  이 라이선스를 어기면 허락은 즉시 끝난다. 다만 위반을 통지받고 30일 안에
-  위반을 모두 바로잡으면 허락이 계속된 것으로 본다.
+Any noncommercial purpose is a permitted purpose.
 
-제8조 (준거법과 해석)
-  이 라이선스는 대한민국 법을 따른다. 한국어본과 영어본이 다르면 한국어본에
-  따른다.
+## Personal Uses
 
-────────────────────────────────────────────────────────────────────────
-English (reference translation; the Korean text above governs)
-────────────────────────────────────────────────────────────────────────
+Personal use for research, experiment, and testing for the benefit of public knowledge, personal study, private entertainment, hobby projects, amateur pursuits, or religious observance, without any anticipated commercial application, is use for a permitted purpose.
 
-Summary (explanatory only; the sections below prevail)
-  - Using it to teach and learn - schools, educational institutions,
-    teachers, students - is free.
-  - Selling it, charging for it, or using it for company work or a for-profit
-    business is not allowed.
-  - This is NOT an "open source" license as defined by the OSI. The source is
-    public, but use is limited to educational purposes.
+## Noncommercial Organizations
 
-1. Definitions
-  1. "Software" means the source code, documentation, configuration, tests and
-     build tools in this repository, and copies or modifications of them,
-     excluding the items listed in Section 5.
-  2. "Educational Purpose" means use of the Software by a school (including
-     kindergarten, primary, secondary, higher, special and alternative
-     schools), a lifelong-education or teacher-training institution, or an
-     education administration body, or by a teacher, instructor, student or
-     other learner, in order to teach, to learn, or to run educational
-     activities.
-  3. "Commercial Purpose" means any of: (a) receiving payment for access to,
-     use of, support for or hosting of the Software or a service built on it;
-     (b) earning revenue from the use of the Software through advertising,
-     sale of data or similar; (c) using it as part of a for-profit business's
-     products, services or operations.
+Use by any charitable organization, educational institution, public research organization, public safety or health organization, environmental protection organization, or government institution is use for a permitted purpose regardless of the source of funding or obligations resulting from the funding.
 
-2. Grant
-  The copyright holder grants everyone, for Educational Purposes only, free of
-  charge and non-exclusively, the right to: (1) use the Software, including
-  installing it and running it on your own server; (2) copy it; (3) modify it;
-  (4) distribute it free of charge to users who use it for Educational
-  Purposes, provided that you include this license text and the copyright
-  notice, state that you changed it if you did, and the same terms apply to
-  the recipient. Viewing and forking this repository within GitHub is governed
-  by the GitHub Terms of Service and is separate from this license.
+## Fair Use
 
-3. Restrictions
-  You may not: (1) use or provide the Software for a Commercial Purpose;
-  (2) use it for anything other than an Educational Purpose (for example,
-  general business collaboration or a service for customers); (3) sell it,
-  offer it as paid hosting or a subscription, or include it in a paid product;
-  (4) remove or alter the copyright notice or this license text; (5) grant
-  broader rights than this license or redistribute it under a different
-  license; (6) use the copyright holder's or the repository's name to suggest
-  endorsement (factual attribution is allowed).
+You may have "fair use" rights for the software under the law. These terms do not limit them.
 
-4. Other permissions
-  Any use outside Section 2, including Commercial Purposes, needs the
-  copyright holder's prior written permission. Ask by opening an Issue at
-  https://github.com/dhsy3206/edulet.
+## No Other Rights
 
-5. What this license does not cover
-  These are not the copyright holder's, and this license grants no rights in
-  them: (1) public/vendor/qrcode.js - QRCode for JavaScript by Kazuhiko Arase
-  (MIT), under the terms in public/vendor/LICENSE-qrcode.txt; (2)
-  seed/demo-board.json and seed/img/ - material transcribed from a public
-  reference board, whose rights belong to its original rights holder; you must
-  obtain permission from them separately; (3) third-party trademarks and logos
-  (for example Google and the Google "G" logo, Padlet, QR Code), which are
-  subject to their owners' guidelines.
+These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else.  These terms do not imply any other licenses.
 
-6. No warranty; limitation of liability
-  The Software is provided "AS IS", without warranty of any kind, including
-  merchantability, fitness for a particular purpose and non-infringement. To
-  the extent permitted by law, the copyright holder is not liable for any
-  damages arising from its use.
+## Patent Defense
 
-7. Termination
-  If you breach this license, your permission ends immediately. It continues,
-  however, if you fix every breach within 30 days after being notified of it.
+If you make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
 
-8. Governing law and interpretation
-  This license is governed by the laws of the Republic of Korea. If the Korean
-  and English texts differ, the Korean text governs.
+## Violations
+
+The first time you are notified in writing that you have violated any of these terms, or done anything with the software not covered by your licenses, your licenses can nonetheless continue if you come into full compliance with these terms, and take practical steps to correct past violations, within 32 days of receiving notice.  Otherwise, all your licenses end immediately.
+
+## No Liability
+
+***As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising out of these terms or the use or nature of the software, under any kind of legal claim.***
+
+## Definitions
+
+The **licensor** is the individual or entity offering these terms, and the **software** is the software the licensor makes available under these terms.
+
+**You** refers to the individual or entity agreeing to these terms.
+
+**Your company** is any legal entity, sole proprietorship, or other kind of organization that you work for, plus all organizations that have control over, are under the control of, or are under common control with that organization.  **Control** means ownership of substantially all the assets of an entity, or the power to direct its management and policies by vote, contract, or otherwise.  Control can be direct or indirect.
+
+**Your licenses** are all the licenses granted to you for the software under these terms.
+
+**Use** means anything you do with the software requiring one of your licenses.
