@@ -49,6 +49,7 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 
 ## 함정(겪은 것)
 
+- **`DATA_DIR` 기본값 `./data` 는 서버 파일이 아니라 "프로세스를 시작한 폴더" 기준**이다(`path.resolve`, 실제로 다른 폴더에서 켜 보니 거기에 새 빈 `data` 가 생겼다) → 바로가기·작업 표시줄·스케줄러로 켜면 "작업이 사라진" 것처럼 보인다. `run.cmd` 는 `cd /d "%~dp0"` 로 자기 폴더에서 시작하고(줄바꿈은 CRLF 유지 — `.gitattributes`), 사용자 안내는 `docs/server-mode.html` 4번. 서버 코드의 기본값을 바꾸면 이미 다른 폴더에 데이터를 쌓아 온 사람이 갑자기 빈 화면을 보게 되니 바꾸지 말고 안내로 푼다.
 - **임의 포트(`listen(0)`)가 fetch·Chrome 이 막는 "나쁜 포트"(4045 등)를 받으면** 첫 요청이 `fetch failed (bad port)` 로 죽는다 → 새 서버는 `tools/ports.mjs` 의 `listenOnGoodPort` / `test/helpers.js` 의 `createAppOnGoodPort` 로 띄운다. 간헐 실패가 보이면 메시지의 포트부터 본다.
 - e2e: 모달은 나중에 autofocus 를 옮기므로 입력 전에 `document.activeElement` 가 그 칸이 될 때까지 기다린다. 화면 아래의 **토스트가 마우스 클릭을 가로챌 수 있다** — 클릭 전에 토스트가 사라질 때까지 기다린다.
 - `api.js` 는 401 마다 "세션 만료"로 보지만 `bad_credentials`(틀린 비밀번호)는 예외다.

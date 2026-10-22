@@ -106,7 +106,7 @@ EDULET_PUBLIC_URL=https://edulet.example.com EDULET_TRUST_PROXY=1 EDULET_COOKIE_
 | 이름 | 기본값 | 설명 |
 |---|---|---|
 | `PORT` / `HOST` | `3000` / `0.0.0.0` | 접속 주소 |
-| `DATA_DIR` | `./data` | DB(`edulet.db`)와 업로드 파일 위치 — **백업은 이 폴더만** |
+| `DATA_DIR` | `./data` | DB(`edulet.db`)와 업로드 파일 위치 — **백업은 이 폴더만**(서버를 끈 뒤 폴더 통째로 복사). `./data` 는 **서버를 시작한 폴더 기준**이라 `run.cmd` 는 먼저 자기 폴더로 이동해 시작합니다. `node server\index.js` 를 다른 폴더에서 직접 켜면 그 폴더에 새 빈 `data` 가 생기니, 위치를 고정하려면 절대 경로를 넣으세요(예: `EDULET_DATA_DIR=D:\EduletData`). 껐다 켠 뒤 이어 쓰기·백업·복원은 [`docs/server-mode.html`](docs/server-mode.html) 4번 |
 | `SEED` | `auto` | `auto` = DB 가 비었을 때만 데모 보드 생성, `0` = 끄기, `1` = 항상 |
 | `ALLOW_REGISTER` | `1` | `0` 이면 가입 막기(기존 계정·게스트만 — Google 로 새로 가입하는 것도 막힙니다) |
 | `GOOGLE_CLIENT_ID` · `GOOGLE_CLIENT_SECRET` | 없음 | **둘 다 있으면** 로그인 창에 "Google 계정으로 계속하기"가 나타납니다 → [아래](#google-로그인-켜기) |

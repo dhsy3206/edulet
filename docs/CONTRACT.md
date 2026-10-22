@@ -24,7 +24,7 @@ docs/          CONTRACT.md screens/
 data/          (gitignore) edulet.db, uploads/
 ```
 
-설정(환경변수, `server/config.js`): `PORT`(3000) `HOST`(0.0.0.0) `DATA_DIR`(./data) `SESSION_DAYS`(30) `MAX_UPLOAD_MB`(20) `ALLOW_REGISTER`(1) `SEED`(auto|0|1, auto = DB 가 비었을 때만) `TRUST_PROXY`(0) `LINK_PREVIEW`(1) `COOKIE_SECURE`(auto: `PUBLIC_URL` 이 https 이거나, TRUST_PROXY 이고 X-Forwarded-Proto=https 이면 Secure). 모두 접두사 `EDULET_`.
+설정(환경변수, `server/config.js`): `PORT`(3000) `HOST`(0.0.0.0) `DATA_DIR`(./data — **프로세스의 현재 폴더 기준**으로 절대 경로가 된다; `run.cmd` 는 시작 전에 `cd /d "%~dp0"` 로 자기 폴더로 이동한다. 위치를 고정하려면 절대 경로) `SESSION_DAYS`(30) `MAX_UPLOAD_MB`(20) `ALLOW_REGISTER`(1) `SEED`(auto|0|1, auto = DB 가 비었을 때만) `TRUST_PROXY`(0) `LINK_PREVIEW`(1) `COOKIE_SECURE`(auto: `PUBLIC_URL` 이 https 이거나, TRUST_PROXY 이고 X-Forwarded-Proto=https 이면 Secure). 모두 접두사 `EDULET_`.
 남용 방지 한도(모두 양수, 잘못된 값은 기본값; 의미와 오류 코드는 §11):
 
 | 환경변수 | 기본 | 뜻 |
