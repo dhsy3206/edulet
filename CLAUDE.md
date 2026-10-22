@@ -6,9 +6,9 @@
 
 | 명령 | 뜻 |
 |---|---|
-| `npm start` | 서버(포트 3000). 처음엔 시드 보드 2개(`/b/demo-board`, `/b/practice`) |
+| `npm start` | 서버(포트 3000). 처음엔 시드 보드 1개(`/b/practice`) |
 | `npm test` | 단위·통합(브라우저 불필요, 약 30초). **303개** |
-| `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **63개** |
+| `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **64개** |
 | `npm run build:pages` · `npm run e2e:pages` | GitHub Pages 정적 데모 빌드(`dist/`, gitignore) · 그 빌드를 `/edulet/` 아래 정적 서버로 띄워 확인. **86개** |
 
 Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs --base /edulet`(안 붙이면 `/edulet` 이 경로로 바뀐다). 푸시는 `env -u GITHUB_TOKEN git push`(환경변수 토큰이 키링을 가린다). `main` 에 푸시하면 `pages.yml` 이 데모를 배포한다. CI(`ci.yml`)는 `npm test` 만 돌린다 — e2e 는 CI 에서 안 돈다(Chrome 경로 미검증).
@@ -35,8 +35,8 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 
 ## 열린 결정·알려진 빈칸
 
-- **라이선스는 PolyForm Strict License 1.0.0**(`LICENSE` = 공식 영어 원문 그대로 + 맨 위 `Required Notice:` 한 줄, 2026-10-22). 비영리 목적으로 있는 그대로 쓰는 것만 허락하고 수정·배포·영리 사용은 불허. **`LICENSE` 본문은 고치지 않는다**(공식 원문과 바이트 동일). SPDX 에 Strict 항목이 없어 `package.json` 은 `SEE LICENSE IN LICENSE`. 저작권자 표기는 GitHub 아이디 `dhsy3206`(바꾸려면 Required Notice 줄). QR 라이브러리·`seed/` 참조 보드 자료·제3자 상표는 `NOTICE` 가 적용 대상에서 뺀다 — 새 제3자 자료를 넣으면 `NOTICE` 에도 적는다. 같은 날 먼저 올렸던 자체 작성 "교육 목적 한정" 라이선스(커밋 5437b22)는 이것으로 대체됐다.
-- `seed/demo-board.json`·`seed/img/` 에 참조 보드 작성자의 표시 이름과 이미지가 들어 있고 저장소가 공개라 **지금 공개 중** — 원 작성자 동의가 불확실하면 바꾸거나 지울 것.
+- **라이선스는 PolyForm Strict License 1.0.0**(`LICENSE` = 공식 영어 원문 그대로 + 맨 위 `Required Notice:` 한 줄, 2026-10-22). 비영리 목적으로 있는 그대로 쓰는 것만 허락하고 수정·배포·영리 사용은 불허. **`LICENSE` 본문은 고치지 않는다**(공식 원문과 바이트 동일). SPDX 에 Strict 항목이 없어 `package.json` 은 `SEE LICENSE IN LICENSE`. 저작권자 표기는 GitHub 아이디 `dhsy3206`(바꾸려면 Required Notice 줄). QR 라이브러리·제3자 상표는 `NOTICE` 가 적용 대상에서 뺀다 — 새 제3자 자료를 넣으면 `NOTICE` 에도 적는다. 같은 날 먼저 올렸던 자체 작성 "교육 목적 한정" 라이선스(커밋 5437b22)는 이것으로 대체됐다.
+- **제3자 자료는 저장소에 두지 않는다.** 예전에 공개 참조 보드를 옮긴 시드 보드(작성자 이름·이미지 포함)와 분석 노트·스크린샷이 있었으나 2026-10-22 에 GitHub(작업 트리·git 기록·Pages)에서 내렸다. 시험은 자체 픽스처만 쓴다(그 자료가 사용자 PC 의 `seed/` 에 되살아나 있어도 결과가 같아야 한다). 로컬 복원분은 `.git/info/exclude` 로 커밋이 막혀 있다 — **`git add -f` 금지**. 새 시드·문서·스크린샷에 남의 보드 내용이나 작성자 이름을 옮기지 마라.
 - 여럿이 같은 보드를 실시간으로 쓰려면 서버 모드가 필요(Pages 는 브라우저 로컬). 공개 운영: HTTPS + `TRUST_PROXY=1` + `COOKIE_SECURE=1`(또는 https `PUBLIC_URL`), 프록시의 SSE 버퍼링 끄기.
 - 고치지 않고 남긴 것: `/auth/login` 의 실패 계수가 해시 뒤에 올라가 동시 추측이 한꺼번에 통과(Google 용 `confirmPassword` 는 이미 앞에서 센다) · `test/seed.test.js` 의 직접 `createApp` 두 곳이 아직 나쁜 포트 재굴림을 안 쓴다 · 보드 탭을 6개 넘게 열면 브라우저 호스트당 연결 제한으로 지연.
 

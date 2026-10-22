@@ -12,13 +12,7 @@ Edulet 의 소스 코드와 문서는 PolyForm Strict License 1.0.0(LICENSE)을 
    Terms: public/vendor/LICENSE-qrcode.txt
    "QR Code" is a registered trademark of DENSO WAVE INCORPORATED.
 
-2. seed/demo-board.json and seed/img/
-   Material transcribed from a public reference board. The rights belong to its
-   original rights holder; obtain permission from them separately.
-   공개된 참조 보드를 옮긴 자료입니다. 권리는 원 권리자에게 있으며, 쓰려면 원
-   권리자의 허락을 따로 받아야 합니다.
-
-3. Third-party trademarks and logos (for example Google and the Google "G" logo,
+2. Third-party trademarks and logos (for example Google and the Google "G" logo,
    Padlet, QR Code) belong to their owners and are subject to their guidelines.
    제3자의 상표와 로고(Google 과 Google "G" 로고, Padlet, QR Code 등)는 각
    소유자의 것이며 그 이용 지침을 따릅니다.

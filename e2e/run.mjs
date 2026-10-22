@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launchBrowser, findChrome } from '../tools/cdp.mjs';
-import { createAppOnGoodPort, makeBoard, makeUser } from '../test/helpers.js';
+import { Client, createAppOnGoodPort, makeBoard, makeUser } from '../test/helpers.js';
 import { startMockGoogle } from '../test/google-mock.js';
+import { buildDemoBoard, makeSeedDir, stubPreviewFetcher } from './demo-board.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, 'out');
@@ -25,11 +26,33 @@ function check(name, ok, detail = '') {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FORMATS = ['wall', 'grid', 'stream', 'shelf', 'rows', 'canvas', 'backchannel'];
 
+// Hermetic: the run never reads the repository's seed/ folder. It seeds from a temp folder with a copy of seed/practice.json only,
+// and builds its own example board through the public API (e2e/demo-board.mjs).
+const repoRoot = join(here, '..');
+const seedDir = makeSeedDir(repoRoot);
 // (a port that Chrome refuses — ERR_UNSAFE_PORT — is re-rolled with a fresh data folder; see test/helpers.js)
-const app = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e-')), port: 0, seed: true }));
+// previewFetcher: link cards of the example board get their preview from a stand-in, never from the network
+const app = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e-')), port: 0, seed: true, seedDir, previewFetcher: stubPreviewFetcher }));
 const dataDir = app.app.config.dataDir;
 const base = app.url.replace(/\/$/, '');
 const browser = await launchBrowser({ width: 1280, height: 860 });
+
+/** Sign an owner up over HTTP and let them build the example board (rows, 3 sections, 17 cards, 2 comments); visitors get read + comment. */
+async function createDemoBoard() {
+  const owner = new Client(app);
+  const reg = await owner.post('/api/auth/register', { username: 'demoowner' + Math.random().toString(36).slice(2, 6), password: 'password-1234', displayName: '예시 소유자' });
+  if (reg.status !== 201 && reg.status !== 200) throw new Error('demo owner register failed ' + reg.status + ' ' + reg.text);
+  return buildDemoBoard({
+    request: async (method, path, body) => {
+      const r = await owner.req(method, '/api' + path, body);
+      return { status: r.status, body: r.json ?? {} };
+    },
+    upload: async (slug, name, mime, bytes) => {
+      const r = await owner.req('PUT', `/api/uploads?board=${encodeURIComponent(slug)}&name=${encodeURIComponent(name)}`, bytes, { raw: true, headers: { 'content-type': mime } });
+      return { status: r.status, body: r.json ?? {} };
+    },
+  }, { links: true });
+}
 
 /** fetch inside the page (uses that context's cookies). */
 const call = (page, method, path, body) =>
@@ -56,18 +79,22 @@ async function step(name, fn) {
 }
 
 try {
-  /* ── S1 reference board (anonymous, read/comment) ── */
+  const demo = await createDemoBoard(); // built by the public API, exactly like a teacher would (the slug is generated, so it is read back)
+  const DEMO_PATH = '/b/' + demo.slug;
+
+  /* ── S1 example board (anonymous, read/comment) ── */
   await step('S1', async () => {
     const ctx = await browser.newContext();
-    const page = await ctx.newPage(base + '/b/demo-board');
+    const page = await ctx.newPage(base + DEMO_PATH);
     await page.waitFor('[data-post-id]', { timeout: 15000 });
     await sleep(600);
-    check('S1 참조 보드: 카드 17장', (await page.count('[data-post-id]')) === 17, 'count=' + (await page.count('[data-post-id]')));
+    check('S1 참조 보드: 카드 17장', (await page.count('[data-post-id]')) === demo.total, 'count=' + (await page.count('[data-post-id]')));
     check('S1 섹션 3개', (await page.count('[data-role="section-title"]')) === 3);
     check('S1 형식 rows', (await page.eval(`document.querySelector('[data-role="board-surface"]')?.dataset.format`)) === 'rows');
     check('S1 읽기 접속자에게 글쓰기 버튼이 없거나 게스트 진입으로 연결', true);
     await page.screenshot(join(OUT, 's1-demo.png'));
     const cards = await page.eval(`[...document.querySelectorAll('[data-post-id]')].map(e => e.dataset.postId)`);
+    check('S1 (준비) 4번째로 보이는 카드가 댓글을 단 카드', cards[3] === String(demo.commentedPostId), `shown=${cards[3]} commented=${demo.commentedPostId}`);
     await page.click(`[data-post-id="${cards[3]}"]`);
     await page.waitFor('[data-role="detail"]');
     check('S1 상세 4 / 17', /4\s*\/\s*17/.test((await page.text('[data-role="detail-pager"]')) || ''));
@@ -76,11 +103,11 @@ try {
     await page.key('ArrowRight');
     await page.waitFor(`/5\\s*\\/\\s*17/.test(document.querySelector('[data-role="detail-pager"]')?.innerText||'')`);
     check('S1 → 키로 다음 글(5 / 17)', true);
-    check('S1 URL 이 /p/<id> 로 동기화', /\/b\/demo-board\/p\/\d+$/.test(await page.eval('location.pathname')));
+    check('S1 URL 이 /p/<id> 로 동기화', new RegExp(`^/b/${demo.slug}/p/\\d+$`).test(await page.eval('location.pathname')));
     await page.key('Escape');
     await page.waitFor(`!document.querySelector('[data-role="detail"]')`);
-    check('S1 Esc 로 닫으면 URL 복귀', (await page.eval('location.pathname')) === '/b/demo-board');
-    const w = await call(page, 'POST', '/boards/demo-board/posts', { title: 'x' });
+    check('S1 Esc 로 닫으면 URL 복귀', (await page.eval('location.pathname')) === DEMO_PATH);
+    const w = await call(page, 'POST', `/boards/${demo.slug}/posts`, { title: 'x' });
     check('S1 비로그인 API 쓰기 → 401', w.status === 401, 'status=' + w.status);
     check('S1 콘솔 오류 없음', page.errors.length === 0, page.errors.join(' | ').slice(0, 300));
     await ctx.close();
@@ -186,9 +213,9 @@ try {
   /* ── S5 mobile layout ── */
   await step('S5', async () => {
     const ctx = await browser.newContext();
-    const page = await ctx.newPage(base + '/b/demo-board', { viewport: { width: 390, height: 844 } });
+    const page = await ctx.newPage(base + DEMO_PATH, { viewport: { width: 390, height: 844 } });
     await page.setViewport(390, 844, true, 2);
-    await page.goto(base + '/b/demo-board');
+    await page.goto(base + DEMO_PATH);
     await page.waitFor('[data-post-id]', { timeout: 15000 });
     await sleep(600);
     check('S5 모바일: 페이지 가로 넘침 없음', await page.eval('document.documentElement.scrollWidth <= window.innerWidth + 1'), 'sw=' + (await page.eval('document.documentElement.scrollWidth')));
@@ -226,7 +253,7 @@ try {
   });
 
   await step('S6b', async () => {
-    const app2 = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e2-')), port: 0, seed: true, pingMs: 3600000 })); // this server never pings
+    const app2 = await createAppOnGoodPort(() => ({ dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e2-')), port: 0, seed: true, seedDir, pingMs: 3600000 })); // this server never pings
     const dir2 = app2.app.config.dataDir;
     const base2 = app2.url.replace(/\/$/, '');
     try {
@@ -271,14 +298,14 @@ try {
     const ctx = await browser.newContext();
     const page = await ctx.newPage(base + '/');
     await sleep(500);
-    await page.eval(`history.pushState(null, '', '/b/demo-board'); dispatchEvent(new PopStateEvent('popstate')); 1`);
+    await page.eval(`history.pushState(null, '', ${JSON.stringify(DEMO_PATH)}); dispatchEvent(new PopStateEvent('popstate')); 1`);
     await page.waitFor('[data-post-id]', { timeout: 15000 });
     const id = await page.eval(`document.querySelector('[data-post-id]').dataset.postId`);
     await page.click(`[data-post-id="${id}"]`);
     await page.waitFor('[data-role="detail"]');
     await page.key('Escape');
     await page.waitFor(`!document.querySelector('[data-role="detail"]')`);
-    check('S6 상세를 닫으면 URL 이 보드로 돌아옴', (await page.eval('location.pathname')) === '/b/demo-board');
+    check('S6 상세를 닫으면 URL 이 보드로 돌아옴', (await page.eval('location.pathname')) === DEMO_PATH);
     await page.eval('history.back(); 1');
     await sleep(600);
     check('S6 닫은 뒤 뒤로가기 한 번이면 보드를 떠남(죽은 기록 없음)', (await page.eval('location.pathname')) === '/', 'path=' + (await page.eval('location.pathname')));
@@ -287,11 +314,11 @@ try {
 
   await step('S6e', async () => {
     const ctx = await browser.newContext();
-    const page = await ctx.newPage(base + '/b/demo-board/p/99999999');
+    const page = await ctx.newPage(base + DEMO_PATH + '/p/99999999');
     await page.waitFor('.toast', { timeout: 6000 });
     check('S6 없는 글 딥링크: 안내 토스트', /찾을 수 없는/.test((await page.text('.toast')) || ''));
     await page.waitFor('[data-post-id]', { timeout: 10000 });
-    check('S6 없는 글 딥링크: 보드로 복귀', (await page.eval('location.pathname')) === '/b/demo-board');
+    check('S6 없는 글 딥링크: 보드로 복귀', (await page.eval('location.pathname')) === DEMO_PATH);
     await ctx.close();
   });
 
@@ -442,6 +469,7 @@ try {
   await browser.close();
   await app.close();
   try { rmSync(dataDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { rmSync(seedDir, { recursive: true, force: true }); } catch { /* ignore */ }
 }
 
 const failed = results.filter((r) => !r.ok);

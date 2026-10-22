@@ -20,7 +20,7 @@ server/        index.js(진입·createApp) config.js db.js(스키마·마이그�
 public/        index.html  css/{base,app,board}.css  js/main.js  js/lib/*  js/views/*  js/board/*  assets/
 seed/          *.json (시드 보드), img/ (시드 이미지)
 test/          *.test.js (node:test)
-docs/          CONTRACT.md REFERENCE.md screens/
+docs/          CONTRACT.md screens/
 data/          (gitignore) edulet.db, uploads/
 ```
 
@@ -241,7 +241,7 @@ pending 게시물 관련 이벤트는 moderate 이상과 작성자 연결에만 
   "commenters": ["…"] }
 ```
 `image` 는 `seed/` 기준 경로 — 시드 시 `DATA_DIR/uploads` 로 복사해 업로드 레코드를 만들고 `{kind:'image'}` 첨부로 만든다. 시드는 멱등(같은 slug 가 있으면 건너뜀). `node server/seed-cli.js [--reset-demo]`.
-실제 `seed/*.json` 이 쓰는 확장 필드(모두 구현할 것):
+`seed/*.json` 이 쓸 수 있는 확장 필드(모두 구현할 것). 저장소에는 `practice.json` 하나만 들어 있고, 이미지·파일을 가리키는 필드는 시험이 임시 시드 폴더로 확인한다:
 - `board.ageDays`: 보드 생성 시각 = 지금 − ageDays일. 게시물은 그 시각 + (목록 순서 × 60초). 댓글은 게시물 시각 + 1시간.
 - `attachment.kind:'link'` 일 때 `preview.imageFile`(seed 기준 경로) → 업로드로 복사하고 `preview.image` 를 그 URL 로 채운다. 시드는 **네트워크를 쓰지 않는다**(미리보기를 JSON 값 그대로 저장).
 - `attachment.kind:'file'`: `file`(seed 기준 경로, 업로드로 복사), `name`, `mime`; `previewImageFile` 이 있으면 업로드로 복사하고 첨부 `preview.image` 에 그 URL 을 넣는다(파일 카드 위에 미리보기 썸네일을 보여 주기 위함). `Post.attachment` 의 `file` 종류는 `preview?:{image}` 를 가질 수 있다.
@@ -307,21 +307,21 @@ class BoardController {
 - `ui` — `modal({title, body, actions, onClose, size})`, `toast(msg, kind)`, `confirmDialog({title, message, danger})`, `popover(anchorEl, items)`(⋮ 메뉴), `avatar(user, size)`, `timeAgo(ms)`, `icon(name)`(인라인 SVG 아이콘 세트), `copyText(text)`, `qr(text)`(없으면 null).
 - `markdown.js` — `renderRich(text) → DocumentFragment`: 안전한 부분 집합만 (문단·줄바꿈, `**굵게**`, `*기울임*`, `` `코드` ``, `- ` 목록, 자동 링크(`http(s)` 만, `rel="noopener noreferrer" target="_blank"`)). HTML 은 전부 텍스트로 취급.
 
-## 9. 시각 명세 (참조 보드 관찰 + 자체 디자인)
+## 9. 시각 명세 (보드 앱의 일반적인 구성을 관찰 + 자체 디자인)
 
 - 전체: 배경(wallpaper) 위에 콘텐츠. 상단 얇은 바(좌: 앱 로고 텍스트 `Edulet`, 우: 검색·슬라이드쇼·공유·설정(⚙)·접속자 아바타·사용자 메뉴). 그 아래 보드 헤더: `작성자 • 시간` 작은 글씨, 큰 제목(굵게), 설명.
-- 배경 프리셋은 CSS 그라데이션(자체 제작). `green` 이 기본이며 참조 보드의 인상(연두→초록 방사형 그라데이션)을 따른다. `night` 등 어두운 배경에는 헤더 글씨를 흰색, 밝은 배경은 어두운 글씨.
+- 배경 프리셋은 CSS 그라데이션(자체 제작). `green` 이 기본(연두→초록 방사형 그라데이션)이다. `night` 등 어두운 배경에는 헤더 글씨를 흰색, 밝은 배경은 어두운 글씨.
 - 게시물 카드: 흰색(또는 post color 의 연한 틴트), 둥근 모서리 12px, 약한 그림자. 머리줄(원형 아바타·작성자·`n분 전`·⋮ 메뉴), 굵은 제목, 첨부 미리보기(이미지는 카드 폭 가득·비율 유지, 링크는 썸네일+도메인+제목, 파일은 아이콘+이름+크기, 영상은 썸네일+재생 아이콘), 본문, 하단(좌: 반응 버튼, 우: 💬 댓글 수). 카드 폭 ≈ 256px(rows/shelf), wall 은 최소 240px 벽돌식 다단, grid 는 균등 격자, stream 은 중앙 단일 열(최대 680px), canvas 는 절대 위치.
 - `rows`/`shelf` 섹션 머리: 어두운 초록 탭 모양(둥근 위쪽 모서리)에 굵은 글씨 + `⋯` 버튼(이름 변경·삭제·왼/오른쪽 이동·카드 추가). `rows` 는 줄마다 가로 스크롤, `shelf` 는 열마다 세로 스크롤, 섹션 끝에 `+` 카드 추가 버튼. 섹션 추가 버튼은 맨 끝.
 - 작성기: 보드 우하단 둥근 `+` 플로팅 버튼(write 권한자만) 또는 섹션의 `+`. 누르면 카드 자리에 인라인 작성기(제목, 본문, 첨부 도구줄: 이미지/파일/링크/색상) — 모바일에서는 하단 시트. 붙여넣기·드래그앤드롭으로 이미지 첨부. 게스트가 쓰려면 이름 입력(게스트 로그인) 먼저.
-- 상세 보기(참조 보드와 동일한 구성): 전체 화면 오버레이, 왼쪽 큰 미디어(없으면 본문 크게), 오른쪽 360px 패널(작성자·제목·본문·반응 줄·댓글 목록·댓글 입력창), 좌상단 ✕, 우측 상단 `n / N` 과 ‹ › 버튼, 키보드 ←→/Esc.
+- 상세 보기: 전체 화면 오버레이, 왼쪽 큰 미디어(없으면 본문 크게), 오른쪽 360px 패널(작성자·제목·본문·반응 줄·댓글 목록·댓글 입력창), 좌상단 ✕, 우측 상단 `n / N` 과 ‹ › 버튼, 키보드 ←→/Esc.
 - 슬라이드쇼: 전체 화면, 카드 한 장씩 크게, ←→ 이동, Space 자동 재생(5초) 토글, Esc 종료, 진행 `n / N`.
 - 접근성: 모든 버튼에 `aria-label`, 포커스 링, 모달 포커스 트랩·Esc, 색 대비 4.5:1, `prefers-reduced-motion` 존중. 모바일(≤ 640px) 단일 열 대응, 터치 드래그.
 - 한국어 문구는 존댓말 아닌 간결한 안내체(예: "보드를 만들었어요", "저장하지 못했어요. 다시 시도해 주세요").
 
 ## 10. 수용 기준 (오케스트레이터가 직접 검증)
 
-1. `npm start` 한 줄로 기동, 시드된 참조 보드가 `/b/demo-board` 에 `rows` 형식으로 17개 카드·섹션 3개·댓글 2개와 함께 뜬다.
+1. `npm start` 한 줄로 기동, 시드된 연습장이 `/b/practice` 에 `wall` 형식으로 카드 3장과 함께 뜬다.
 2. 두 브라우저(서로 다른 사용자)가 같은 보드를 열고, 한쪽의 게시물·댓글·반응·이동·섹션 변경이 **새로고침 없이** 다른 쪽에 나타난다.
 3. 7개 형식 모두 렌더되고 형식 전환이 즉시 반영된다. 드래그로 순서 변경·섹션 간 이동(rows/shelf)·캔버스 이동이 저장된다.
 4. 권한표가 서버에서 강제된다(프런트 숨김에만 의존하지 않음). 비로그인 read 접속자는 쓰기 UI 가 없고, API 로 쓰면 401/403.

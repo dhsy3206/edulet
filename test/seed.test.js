@@ -6,57 +6,67 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client, PNG, makeUser, startApp } from './helpers.js';
+import { FX, makeSeedFixture } from './seed-fixture.js';
 import { applySeed, loadSeedSpecs, resetDemo, runSeed } from '../server/seed.js';
 import { createApp } from '../server/index.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-describe('seeding with the real seed/*.json', () => {
+// These tests never look at the repository's seed/ folder as a whole (it may carry extra local boards on a developer PC).
+// They seed a temporary folder = a copy of the real seed/practice.json + the own fixture board in test/seed-fixture.js.
+// Only the seed-cli test at the end runs against the repository's seed/ (the CLI has that folder built in) and says only
+// what holds for practice.json.
+
+describe('seeding a seed folder (copy of seed/practice.json + own fixture board)', () => {
   let app;
   let anon;
+  let fx;
   before(async () => {
-    app = await startApp({ seed: 'auto' }); // empty DB -> seeds the repository's seed/ folder
+    fx = makeSeedFixture();
+    app = await startApp({ seed: 'auto', seedDir: fx.dir }); // empty DB -> seeds the temp folder
     anon = new Client(app);
   });
-  after(async () => { await app.close(); });
+  after(async () => { await app.close(); fx.cleanup(); });
 
-  it('creates both boards on first start', () => {
-    assert.deepEqual(app.seeded.map((s) => [s.slug, s.created]).sort(), [['demo-board', true], ['practice', true]]);
+  it('creates both boards on first start (and only those: the temp folder is what was seeded)', () => {
+    assert.equal(app.app.seedDir, fx.dir);
+    assert.deepEqual(app.seeded.map((s) => [s.slug, s.created]).sort(), [[FX.slug, true], ['practice', true]]);
     assert.equal(app.db.get('SELECT COUNT(*) AS n FROM boards').n, 2);
   });
 
-  it('demo-board: rows format, comment link access, 3 sections, 17 posts, 2 comments on "네 번째 카드"', async () => {
-    const r = await anon.get('/api/boards/demo-board');
+  it('fixture board: rows format, comment link access, 3 sections, 17 posts, 2 comments on the 4th card', async () => {
+    const r = await anon.get(`/api/boards/${FX.slug}`);
     assert.equal(r.status, 200, 'readable without logging in');
     const { board, sections, posts, role, isOwner } = r.json;
     assert.equal(board.format, 'rows');
     assert.equal(board.linkAccess, 'comment');
     assert.equal(board.visibility, 'link');
     assert.equal(board.wallpaper, 'green');
-    assert.equal(board.title, '연수 예시 보드');
-    assert.equal(board.owner.displayName, '게시자');
+    assert.equal(board.title, FX.title);
+    assert.equal(board.owner.displayName, FX.ownerName);
     assert.equal(board.settings.newPostPosition, 'bottom');
     assert.equal(role, 'comment');
     assert.equal(isOwner, false);
     assert.equal(sections.length, 3);
     assert.deepEqual(sections.map((s) => s.rank), [1, 2, 3]);
-    assert.deepEqual(sections.map((s) => s.title), ['1부: 시작하기', '2부: 둘러보기', '3부: 마무리']);
+    assert.deepEqual(sections.map((s) => s.title), FX.sectionTitles);
     assert.equal(posts.length, 17);
-    const drive = posts.filter((p) => p.title === '네 번째 카드');
-    assert.equal(drive.length, 1);
-    assert.equal(drive[0].commentCount, 2);
+    const commented = posts.filter((p) => p.title === FX.cards.commented);
+    assert.equal(commented.length, 1);
+    assert.equal(commented[0].commentCount, 2);
     assert.equal(posts.reduce((n, p) => n + p.commentCount, 0), 2, 'no other post has comments');
-    const comments = (await anon.get(`/api/posts/${drive[0].id}/comments`)).json.comments;
+    const comments = (await anon.get(`/api/posts/${commented[0].id}/comments`)).json.comments;
     assert.equal(comments.length, 2);
-    assert.equal(comments[0].body, '네 번째 카드\nhttps://example.com/a');
-    assert.equal(comments[1].body, '스튜디오\nhttps://example.com/b');
+    assert.equal(comments[0].body, FX.commentBodies[0]);
+    assert.equal(comments[1].body, FX.commentBodies[1]);
     assert.equal(comments[0].author.id, board.owner.id, 'no author given -> the owner');
     // sections hold 7 / 8 / 2 posts, in listing order (newPostPosition=bottom -> rank grows)
     const per = sections.map((s) => posts.filter((p) => p.sectionId === s.id).sort((a, b) => a.rank - b.rank).map((p) => p.title));
     assert.deepEqual(per.map((l) => l.length), [7, 8, 2]);
-    assert.equal(per[0][0], '첫 번째 카드');
-    assert.equal(per[0][3], '네 번째 카드');
-    assert.equal(per[2][1], '마지막 카드');
+    assert.deepEqual(per.flat(), FX.cards.all, 'display order = listing order');
+    assert.equal(per[0][0], FX.cards.first);
+    assert.equal(per[0][3], FX.cards.commented);
+    assert.equal(per[2][1], FX.cards.last, 'a title with "&" arrives as written');
     assert.ok(posts.every((p) => p.status === 'published' && p.author.id === board.owner.id));
   });
 
@@ -91,67 +101,80 @@ describe('seeding with the real seed/*.json', () => {
     assert.equal(app.db.get('SELECT COUNT(*) AS n FROM sessions').n, 0, 'seeding creates no sessions');
     // a visitor with a session cannot administrate the demo board
     const u = makeUser(app, 'visitor');
-    assert.equal((await u.patch('/api/boards/demo-board', { title: 'hacked' })).status, 403);
-    assert.equal((await u.del('/api/boards/demo-board')).status, 403);
+    assert.equal((await u.patch(`/api/boards/${FX.slug}`, { title: 'hacked' })).status, 403);
+    assert.equal((await u.del(`/api/boards/${FX.slug}`)).status, 403);
   });
 
   it('ageDays: board created ~31 days ago, posts +60s apart in list order, comments +1h', async () => {
-    const { board, posts } = (await anon.get('/api/boards/demo-board')).json;
+    const { board, posts } = (await anon.get(`/api/boards/${FX.slug}`)).json;
     const age = (Date.now() - board.createdAt) / 86400000;
     assert.ok(age > 30.9 && age < 31.1, `age ${age}`);
     const byRank = [...posts].sort((a, b) => a.createdAt - b.createdAt);
     assert.equal(byRank[0].createdAt, board.createdAt);
     assert.equal(byRank[1].createdAt - byRank[0].createdAt, 60000);
     assert.equal(byRank[16].createdAt - byRank[0].createdAt, 16 * 60000);
-    const drive = posts.find((p) => p.title === '네 번째 카드');
-    const cs = (await anon.get(`/api/posts/${drive.id}/comments`)).json.comments;
-    assert.ok(cs.every((c) => c.createdAt === drive.createdAt + 3600000));
+    const commented = posts.find((p) => p.title === FX.cards.commented);
+    const cs = (await anon.get(`/api/posts/${commented.id}/comments`)).json.comments;
+    assert.ok(cs.every((c) => c.createdAt === commented.createdAt + 3600000));
     const practice = (await anon.get('/api/boards/practice')).json.board;
     assert.ok(Math.abs((Date.now() - practice.createdAt) / 86400000 - 1) < 0.1);
   });
 
   it('seed images are copied into uploads and served (image / file / link-preview thumbnails)', async () => {
-    const { posts } = (await anon.get('/api/boards/demo-board')).json;
-    const image = posts.find((p) => p.title === '첫 번째 카드');
+    const onDisk = (rel) => fs.readFileSync(path.join(fx.dir, rel));
+    const { posts } = (await anon.get(`/api/boards/${FX.slug}`)).json;
+    const image = posts.find((p) => p.title === FX.cards.first);
     assert.equal(image.attachment.kind, 'image');
     assert.equal(image.attachment.mime, 'image/jpeg');
-    assert.equal(image.attachment.name, 'sample.jpg');
-    assert.equal(image.attachment.size, fs.statSync(path.join(ROOT, 'seed', 'img', 'sample.jpg')).size);
-    assert.match(image.attachment.url, /^\/uploads\/[0-9a-f]{32}\/sample\.jpg$/);
+    assert.equal(image.attachment.name, FX.image.name);
+    assert.equal(image.attachment.size, fs.statSync(path.join(fx.dir, FX.image.file)).size);
+    assert.match(image.attachment.url, /^\/uploads\/[0-9a-f]{32}\/sample-photo\.jpg$/);
     const got = await fetch(app.url + image.attachment.url);
     assert.equal(got.status, 200);
     assert.equal(got.headers.get('content-type'), 'image/jpeg');
-    assert.deepEqual(Buffer.from(await got.arrayBuffer()), fs.readFileSync(path.join(ROOT, 'seed', 'img', 'sample.jpg')));
+    assert.deepEqual(Buffer.from(await got.arrayBuffer()), onDisk(FX.image.file));
     // png / webp keep their real types
-    assert.equal(posts.find((p) => p.title === '이미지 카드').attachment.mime, 'image/png');
+    const png = posts.find((p) => p.title === FX.cards.last);
+    assert.equal(png.attachment.kind, 'image');
+    assert.equal(png.attachment.mime, 'image/png');
+    assert.equal(png.attachment.name, FX.png.name);
+    const pngGot = await fetch(app.url + png.attachment.url);
+    assert.equal(pngGot.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await pngGot.arrayBuffer()), onDisk(FX.png.file));
     // file attachment with preview thumbnail; Korean/space file name percent-encoded in the URL
-    const file = posts.find((p) => p.title === '파일 카드');
+    const file = posts.find((p) => p.title === FX.cards.file);
     assert.equal(file.attachment.kind, 'file');
-    assert.equal(file.attachment.name, 'sample.pdf');
+    assert.equal(file.attachment.name, FX.pdf.name);
     assert.equal(file.attachment.mime, 'application/pdf');
-    assert.match(file.attachment.url, /^\/uploads\/[0-9a-f]{32}\/sample\.pdf$/);
-    assert.equal(file.attachment.size, fs.statSync(path.join(ROOT, 'seed', 'img', 'sample.pdf')).size);
-    assert.match(file.attachment.preview.image, /^\/uploads\/[0-9a-f]{32}\/sample-preview\.png$/);
+    assert.match(file.attachment.url, /^\/uploads\/[0-9a-f]{32}\/%EC%98%88%EC%8B%9C%20%EC%9E%90%EB%A3%8C%20-%201\.pdf$/);
+    assert.equal(file.attachment.url.endsWith(`/${encodeURIComponent(FX.pdf.name)}`), true);
+    assert.equal(file.attachment.size, fs.statSync(path.join(fx.dir, FX.pdf.file)).size);
+    assert.match(file.attachment.preview.image, /^\/uploads\/[0-9a-f]{32}\/handout-preview\.png$/);
     const pdf = await fetch(app.url + file.attachment.url);
     assert.equal(pdf.status, 200);
     assert.equal(pdf.headers.get('content-type'), 'application/pdf');
     assert.match(pdf.headers.get('content-disposition'), /^attachment/);
-    assert.equal((await pdf.arrayBuffer()).byteLength, file.attachment.size);
+    const pdfBytes = Buffer.from(await pdf.arrayBuffer());
+    assert.equal(pdfBytes.byteLength, file.attachment.size);
+    assert.deepEqual(pdfBytes, onDisk(FX.pdf.file));
     const thumb = await fetch(app.url + file.attachment.preview.image);
     assert.equal(thumb.headers.get('content-type'), 'image/png');
-    await thumb.arrayBuffer();
+    assert.deepEqual(Buffer.from(await thumb.arrayBuffer()), onDisk(FX.pdf.previewFile));
     // link previews are stored verbatim, imageFile -> local upload URL, no network involved
-    const labs = posts.find((p) => p.title === '링크 카드');
-    assert.equal(labs.attachment.kind, 'link');
-    assert.equal(labs.attachment.url, 'https://example.com/');
-    assert.equal(labs.attachment.preview.title, 'example.com');
-    assert.equal(labs.attachment.preview.description, "Example description");
-    assert.equal(labs.attachment.preview.site, 'example.com');
-    assert.match(labs.attachment.preview.image, /^\/uploads\/[0-9a-f]{32}\/sample\.webp$/);
-    assert.equal(labs.attachment.preview.imageFile, undefined);
-    const lt = await fetch(app.url + labs.attachment.preview.image);
+    const link = posts.find((p) => p.title === FX.cards.link);
+    assert.equal(link.attachment.kind, 'link');
+    assert.equal(link.attachment.url, FX.link.url);
+    assert.equal(link.attachment.preview.title, FX.link.title);
+    assert.equal(link.attachment.preview.description, FX.link.description);
+    assert.equal(link.attachment.preview.site, FX.link.site);
+    assert.match(link.attachment.preview.image, /^\/uploads\/[0-9a-f]{32}\/link-thumb\.webp$/);
+    assert.equal(link.attachment.preview.imageFile, undefined);
+    const lt = await fetch(app.url + link.attachment.preview.image);
     assert.equal(lt.headers.get('content-type'), 'image/webp');
-    await lt.arrayBuffer();
+    assert.deepEqual(Buffer.from(await lt.arrayBuffer()), onDisk(FX.link.imageFile));
+    // exactly the five files of the fixture board became uploads (nothing else in the temp folder was picked up)
+    assert.equal(posts.filter((p) => p.attachment).length, 4);
+    assert.equal(app.db.get('SELECT COUNT(*) AS n FROM uploads').n, 5);
     // every uploaded file referenced by a post exists on disk
     for (const p of posts) {
       for (const url of [p.attachment?.url, p.attachment?.preview?.image]) {
@@ -166,7 +189,7 @@ describe('seeding with the real seed/*.json', () => {
   it('is idempotent: re-running with mode on creates nothing new', async () => {
     const counts = () => app.db.all('SELECT (SELECT COUNT(*) FROM boards) b, (SELECT COUNT(*) FROM posts) p, (SELECT COUNT(*) FROM comments) c, (SELECT COUNT(*) FROM users) u, (SELECT COUNT(*) FROM uploads) f, (SELECT COUNT(*) FROM sections) s')[0];
     const before = { ...counts() };
-    const again = runSeed(app.app, { mode: 'on', dir: path.join(ROOT, 'seed') });
+    const again = runSeed(app.app, { mode: 'on', dir: fx.dir });
     assert.deepEqual(again.map((s) => s.created), [false, false]);
     assert.deepEqual({ ...counts() }, before);
     assert.equal(fs.readdirSync(path.join(app.dir, 'uploads')).length, app.db.get('SELECT COUNT(*) AS n FROM uploads').n, 'no duplicate files either');
@@ -176,32 +199,37 @@ describe('seeding with the real seed/*.json', () => {
 describe('seed lifecycle (temporary data folders)', () => {
   const mkdir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'edulet-seedtest-'));
   const rm = (d) => fs.rmSync(d, { recursive: true, force: true });
+  let fx; // temp seed folder: practice.json copy + the fixture board (the repository's seed/ is not used here)
+  let seedDir;
+  before(() => { fx = makeSeedFixture(); seedDir = fx.dir; });
+  after(() => { fx.cleanup(); });
 
   it('auto seeds only an empty database; off never seeds; on seeds even when boards exist', async () => {
     const data = mkdir();
     try {
-      let a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', quiet: true });
+      let a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', seedDir, quiet: true });
       assert.equal(a.seeded.length, 2);
       assert.equal(a.db.get('SELECT COUNT(*) AS n FROM boards').n, 2);
       const total = a.db.get('SELECT COUNT(*) AS n FROM posts').n;
+      assert.equal(total, 20);
       await a.close();
       // restart: nothing changes
-      a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', quiet: true });
+      a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', seedDir, quiet: true });
       assert.deepEqual(a.seeded, []);
       assert.equal(a.db.get('SELECT COUNT(*) AS n FROM posts').n, total);
       // a user board exists and the demo gets deleted -> auto does NOT bring it back (boards exist)
       a.db.run("DELETE FROM boards WHERE slug = 'practice'");
       await a.close();
-      a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', quiet: true });
+      a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', seedDir, quiet: true });
       assert.equal(a.db.get("SELECT COUNT(*) AS n FROM boards WHERE slug = 'practice'").n, 0);
       await a.close();
       // on: restores the missing demo board, leaves the existing one alone
-      a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 1, quiet: true });
-      assert.deepEqual(a.seeded.map((s) => [s.slug, s.created]).sort(), [['demo-board', false], ['practice', true]]);
+      a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 1, seedDir, quiet: true });
+      assert.deepEqual(a.seeded.map((s) => [s.slug, s.created]).sort(), [[FX.slug, false], ['practice', true]]);
       await a.close();
       const off = mkdir();
       try {
-        const b = await createApp({ dataDir: off, port: 0, host: '127.0.0.1', seed: 0, quiet: true });
+        const b = await createApp({ dataDir: off, port: 0, host: '127.0.0.1', seed: 0, seedDir, quiet: true });
         assert.equal(b.db.get('SELECT COUNT(*) AS n FROM boards').n, 0);
         await b.close();
       } finally { rm(off); }
@@ -213,11 +241,11 @@ describe('seed lifecycle (temporary data folders)', () => {
     const old = process.env.EDULET_SEED;
     try {
       process.env.EDULET_SEED = '0';
-      const a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', quiet: true });
+      const a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seedDir, quiet: true });
       assert.equal(a.db.get('SELECT COUNT(*) AS n FROM boards').n, 0);
       await a.close();
       process.env.EDULET_SEED = '1';
-      const b = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', quiet: true });
+      const b = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seedDir, quiet: true });
       assert.equal(b.db.get('SELECT COUNT(*) AS n FROM boards').n, 2);
       await b.close();
     } finally {
@@ -317,12 +345,12 @@ describe('seed lifecycle (temporary data folders)', () => {
 
   it('resetDemo removes only the seeded boards (and their files), then the seed can be re-applied', async () => {
     const data = mkdir();
-    const a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', quiet: true });
+    const a = await createApp({ dataDir: data, port: 0, host: '127.0.0.1', seed: 'auto', seedDir, quiet: true });
     try {
       const u = makeUser(a, 'real');
       const mine = (await u.post('/api/boards', { title: '내 보드' })).json.board;
       await u.post(`/api/boards/${mine.slug}/posts`, { title: '내 글' });
-      const seedDir = path.join(ROOT, 'seed');
+      assert.equal(a.db.get('SELECT COUNT(*) AS n FROM uploads').n, 5, 'the fixture board brought its five files');
       resetDemo(a.app, seedDir);
       assert.deepEqual(a.db.all('SELECT slug FROM boards').map((b) => b.slug), [mine.slug]);
       assert.equal(a.db.get('SELECT COUNT(*) AS n FROM uploads').n, 0);
@@ -331,23 +359,24 @@ describe('seed lifecycle (temporary data folders)', () => {
       assert.equal(a.db.get('SELECT COUNT(*) AS n FROM posts').n, 1, 'user content untouched');
       const again = runSeed(a.app, { mode: 'on', dir: seedDir });
       assert.deepEqual(again.map((s) => s.created), [true, true]);
-      assert.equal((await new Client(a).get('/api/boards/demo-board')).json.posts.length, 17);
+      assert.equal((await new Client(a).get(`/api/boards/${FX.slug}`)).json.posts.length, 17);
     } finally { await a.close(); rm(data); }
   });
 
+  // server/seed-cli.js has the repository's seed/ folder built in (no option), so this is the one test that reads it.
+  // Other boards may sit there as well (local material on a developer PC) -> only `practice` is asserted.
   it('seed-cli prints board URLs and supports --reset-demo', () => {
     const data = mkdir();
     try {
       const env = { ...process.env, EDULET_DATA_DIR: data, EDULET_PORT: '4567' };
       const run = (...args) => execFileSync(process.execPath, [path.join(ROOT, 'server', 'seed-cli.js'), ...args], { env, encoding: 'utf8' });
       const first = run();
-      assert.match(first, /created\s+http:\/\/localhost:4567\/b\/demo-board/);
       assert.match(first, /created\s+http:\/\/localhost:4567\/b\/practice/);
       const second = run();
-      assert.match(second, /exists\s+http:\/\/localhost:4567\/b\/demo-board/);
+      assert.match(second, /exists\s+http:\/\/localhost:4567\/b\/practice/);
       assert.doesNotMatch(second, /created/);
       const third = run('--reset-demo');
-      assert.match(third, /created\s+http:\/\/localhost:4567\/b\/demo-board/);
+      assert.match(third, /created\s+http:\/\/localhost:4567\/b\/practice/);
       assert.ok(fs.existsSync(path.join(data, 'edulet.db')));
     } finally { rm(data); }
   });

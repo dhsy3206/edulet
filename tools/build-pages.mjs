@@ -28,7 +28,7 @@ for (const f of readdirSync(join(root, 'seed'))) {
   const p = join(root, 'seed', f);
   if (f.endsWith('.json')) cpSync(p, join(out, 'seed', f));
 }
-cpSync(join(root, 'seed', 'img'), join(out, 'seed', 'img'), { recursive: true });
+if (existsSync(join(root, 'seed', 'img'))) cpSync(join(root, 'seed', 'img'), join(out, 'seed', 'img'), { recursive: true });
 
 // 3. index.html: relative asset URLs under <base>, demo bootstrap before the app, CSP (Pages cannot send headers)
 let html = readFileSync(join(root, 'public', 'index.html'), 'utf8');

@@ -60,9 +60,8 @@ export function homePage(root) {
       h('p', { class: 'home-lead' }, '링크 하나로 모두가 함께 글과 사진, 링크를 올리는 실시간 보드예요. 설치도 필요 없고, 참여하는 사람은 가입하지 않아도 돼요.'),
       h('div', { class: 'home-cta' },
         h('button', { type: 'button', class: 'btn btn-primary btn-lg', onClick: startCreate }, icon('plus', { size: 20 }), '보드 만들기'),
-        h('a', { class: 'btn btn-secondary btn-lg', href: '/b/practice', 'data-link': true }, '연습장 열어 보기'),
-        h('a', { class: 'btn btn-ghost btn-lg', href: '/b/demo-board', 'data-link': true }, '연수 예시 보기')),
-      h('p', { class: 'home-note' }, '연습장과 예시 보드는 로그인 없이 바로 열려요.')),
+        h('a', { class: 'btn btn-secondary btn-lg', href: '/b/practice', 'data-link': true }, '연습장 열어 보기')),
+      h('p', { class: 'home-note' }, '연습장은 로그인 없이 바로 열려요.')),
     heroArt());
 
   const features = h('section', { class: 'home-section', 'aria-labelledby': 'home-feat' },

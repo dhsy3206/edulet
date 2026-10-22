@@ -7,7 +7,7 @@
   const { C, isSectioned, uploadUrl, sniffImage } = E;
   const { q, insert } = E.db;
 
-  const SEED_FILES = ['demo-board.json', 'practice.json']; // order = board creation order (ids match the Node server's)
+  const SEED_FILES = ['practice.json']; // order = board creation order (ids match the Node server's)
   const MIME_BY_EXT = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
     '.pdf': 'application/pdf', '.txt': 'text/plain', '.csv': 'text/csv', '.mp4': 'video/mp4',
