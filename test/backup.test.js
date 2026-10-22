@@ -571,22 +571,23 @@ describe('backup: refusals and failures leave nothing behind', () => {
     assert.deepEqual(names(out), entries);
   });
 
-  it('6f. verifySnapshot rejects a database whose integrity_check is not "ok" (tables fine, an orphan page)', () => {
+  it('6f. verifySnapshot rejects a database whose integrity_check is not "ok" (every table still reads fine)', () => {
     const dir = tmpDir('verify');
     const file = path.join(dir, 'edulet.db');
-    // an index whose schema row is dropped leaves its pages behind: every table still reads fine, integrity_check complains
+    // a row that breaks a CHECK constraint (written with ignore_check_constraints, which even SQLite's "defensive" mode allows — unlike
+    // editing sqlite_master, which Node 24 refuses): counting and reading still work, only integrity_check complains
     withDb(file, (d) => {
-      d.exec('CREATE TABLE boards(id INTEGER PRIMARY KEY, slug TEXT); CREATE TABLE posts(id INTEGER PRIMARY KEY, t TEXT, created_at INTEGER); CREATE TABLE users(id INTEGER PRIMARY KEY); CREATE TABLE uploads(id TEXT, size INTEGER, created_at INTEGER)');
-      d.exec('CREATE INDEX i_posts ON posts(t)');
+      d.exec('CREATE TABLE boards(id INTEGER PRIMARY KEY, slug TEXT); CREATE TABLE posts(id INTEGER PRIMARY KEY, t TEXT, created_at INTEGER CHECK (created_at > 0)); CREATE TABLE users(id INTEGER PRIMARY KEY); CREATE TABLE uploads(id TEXT, size INTEGER, created_at INTEGER)');
       for (let i = 0; i < 50; i++) d.prepare('INSERT INTO posts (t, created_at) VALUES (?, ?)').run(`row ${i}`, 1000 + i);
     }, { readOnly: false });
     const healthy = verifySnapshot(file);
     assert.equal(healthy.counts.posts, 50, 'a healthy file passes');
     assert.equal(healthy.latestPostAt, 1049, 'the newest post time is read from the snapshot');
     withDb(file, (d) => {
-      d.exec('PRAGMA writable_schema = ON');
-      d.exec("DELETE FROM sqlite_master WHERE name = 'i_posts'");
-      d.exec('PRAGMA writable_schema = OFF');
+      d.exec('PRAGMA ignore_check_constraints = ON');
+      d.exec("INSERT INTO posts (t, created_at) VALUES ('violates the CHECK', -5)");
+      d.exec('PRAGMA ignore_check_constraints = OFF');
+      assert.equal(d.prepare('SELECT COUNT(*) AS n FROM posts').get().n, 51, 'the damaged table still reads fine');
     }, { readOnly: false });
     assert.throws(() => verifySnapshot(file), (e) => e instanceof BackupError && /integrity_check/.test(e.message));
   });

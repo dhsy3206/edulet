@@ -180,7 +180,11 @@ function snapshotDatabase(sourceFile, targetFile) {
 export function verifySnapshot(file) {
   let db;
   try {
-    db = openReadOnly(file);
+    // The snapshot is OUR OWN fresh file (journal_mode = delete), never the server's database, so it is opened normally here: measured on
+    // SQLite 3.49, a READ-ONLY connection skips the CHECK-constraint part of integrity_check (a violating row reads "ok") while a normal
+    // connection reports it. Nothing is written — integrity_check and SELECTs only. (The ORIGINAL is still only ever opened read-only.)
+    db = new DatabaseSync(file);
+    db.exec('PRAGMA busy_timeout = 5000');
     const check = db.prepare('PRAGMA integrity_check').all().map((r) => String(Object.values(r)[0]));
     if (check.length !== 1 || check[0] !== 'ok') throw new Error(`integrity_check: ${check.slice(0, 3).join(' / ')}`);
     const count = (table) => Number(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n);
