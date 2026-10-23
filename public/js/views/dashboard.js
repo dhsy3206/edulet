@@ -10,7 +10,7 @@ import { loadTone } from '../board/tone.js';
 import { openAuthModal } from './auth.js';
 import { appHeader } from './shell.js';
 import { openCreateBoardModal, openGuestCannotCreate } from './create-board.js';
-import { copyBoardLink, deleteBoardFlow, duplicateBoardFlow, leaveBoardFlow } from './board-actions.js';
+import { copyBoardLink, deleteBoardFlow, duplicateBoardFlow, exportBoardHtmlFlow, leaveBoardFlow } from './board-actions.js';
 
 function stateBox({ iconName, title, text, actions }) {
   return h('div', { class: 'app-state dash-state' },
@@ -54,6 +54,7 @@ export function dashboardPage(root, query = {}) {
       { label: '열기', icon: 'external-link', onClick: () => router.go(boardPath(b.slug)) },
       { label: '링크 복사', icon: 'link', onClick: () => copyBoardLink(b.slug) },
       { label: '복제', icon: 'copy', onClick: () => duplicateBoardFlow(b) },
+      { label: 'HTML 로 내보내기', icon: 'download', onClick: () => exportBoardHtmlFlow(b) },
       { separator: true },
       owner ? {
         label: '삭제', icon: 'trash', danger: true,

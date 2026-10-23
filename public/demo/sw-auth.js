@@ -28,6 +28,7 @@
   router.add('GET', '/config', async () => ({
     allowRegister: true, maxUploadMb: C.MAX_UPLOAD_MB, linkPreview: true, google: false, googleDomains: [], version: C.VERSION, demo: true,
     share: { origin: null, lan: [] },
+    backup: { available: false }, // 저장하기·불러오기 needs the server PC's backups/ folder: there is none in a browser-only demo (CONTRACT §12)
   }));
 
   router.add('POST', '/auth/register', async (c) => {

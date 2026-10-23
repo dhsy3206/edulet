@@ -15,8 +15,9 @@ import { registerPosts } from './posts.js';
 import { registerComments } from './comments.js';
 import { registerReactions } from './reactions.js';
 import { registerUploads } from './uploads.js';
+import { registerBackups } from './backups.js';
 import { PreviewService, registerPreview } from './preview.js';
-import { defaultNetworkInterfaces, shareInfo, startupLanLine } from './share.js';
+import { defaultNetworkInterfaces, localOperator, shareInfo, startupLanLine } from './share.js';
 import { serveStatic } from './static.js';
 import { loadSeedSpecs, runSeed } from './seed.js';
 
@@ -83,6 +84,14 @@ async function handleApi(app, req, res, url) {
   const m = app.router.match(req.method, url.pathname.slice(4) || '/');
   if (!m) return sendJson(res, 404, { error: { code: 'not_found', message: '없는 주소예요.' } });
   if (m.methodNotAllowed) return sendJson(res, 405, { error: { code: 'method_not_allowed', message: '허용되지 않는 요청이에요.' } });
+  // 점검 모드(저장본을 불러오는 동안, CONTRACT §5): reads and event streams carry on, every change waits. This comes before authenticate()
+  // (which may delete an expired session row) and before any permission check, so nothing writes to the database while it is being replaced.
+  // /api/backups* is not held up here: it meets the mutex instead (a second restore gets 409 `busy`).
+  // (`GET /api/auth/google/*` is a GET that writes — it creates users and sessions — so it waits too.)
+  if (app.maintenance && !/^\/api\/backups(?:\/|$)/.test(url.pathname)
+    && ((req.method !== 'GET' && req.method !== 'HEAD') || /^\/api\/auth\/google(?:\/|$)/.test(url.pathname))) {
+    throw new HttpError(503, 'busy', '지금 저장본을 불러오는 중이에요. 잠시 뒤에 다시 해 주세요.', { 'Retry-After': '3' });
+  }
   const c = new Context(app, req, res, url, m.params);
   const session = authenticate(app, req);
   if (session) { c.user = session.user; c.tokenHash = session.tokenHash; }
@@ -119,7 +128,10 @@ async function dispatch(app, req, res) {
  * Internal / test-only (never read from env or HTTP): config, quiet, publicDir, seedDir, authRateLimit, pingMs, presenceMinMs,
  * allowPrivatePreviewHosts (true | ['host:port']), previewFetcher, previewDnsLookup, previewLimits, uploadIdleMs, uploadGcMaxAgeMs,
  * googleEndpoints ({ auth, token, timeoutMs, exchangesPerMinute } — a stand-in for Google's two OAuth addresses),
- * networkInterfaces (a function shaped like os.networkInterfaces — fake NICs for the `share.lan` list of GET /config).
+ * networkInterfaces (a function shaped like os.networkInterfaces — fake NICs for the `share.lan` list of GET /config),
+ * backupHooks ({ afterValidate({copy}), afterStage(), afterSafetySave(n) } — async functions server/restore.js awaits between its steps, so a
+ * test can write to the database or hold the restore at that point; CONTRACT §5 "저장하기·불러오기").
+ * `backupDir` (also EDULET_BACKUP_DIR) is where 저장하기 writes and 불러오기 reads (default: backups/ in the repository root) — tests always pass a temp folder.
  */
 export async function createApp(opts = {}) {
   const config = loadConfig(opts);
@@ -142,6 +154,9 @@ export async function createApp(opts = {}) {
     uploadIdleMs: opts.uploadIdleMs, // test-only: how long an upload body may stall (default 30 s)
     googleEndpoints: opts.googleEndpoints ?? null, // test-only: where "Google" lives (default: the real accounts.google.com / oauth2.googleapis.com)
     networkInterfaces: typeof opts.networkInterfaces === 'function' ? opts.networkInterfaces : defaultNetworkInterfaces, // test-only: this machine's NICs
+    backupBusy: false, // mutex: one 저장하기 / 불러오기 at a time (server/backups.js)
+    maintenance: false, // true while a restore replaces the data: changing /api requests get 503 (handleApi), the timers below rest
+    backupHooks: opts.backupHooks ?? null, // test-only: see the createApp doc above
   };
   app.hub = new Hub(app, { pingMs: opts.pingMs ?? 25000, presenceMinMs: opts.presenceMinMs ?? 1000 });
   app.preview = new PreviewService({
@@ -161,6 +176,7 @@ export async function createApp(opts = {}) {
     google: googleEnabled(app),
     googleDomains: googleEnabled(app) ? config.googleDomains : [],
     share: shareInfo(app, c.req),
+    backup: { available: localOperator(app, c.req) }, // the 저장하기·불러오기 menu is for the person at the server PC only (server/backups.js)
     version: app.version,
   }));
   registerAuth(app);
@@ -172,17 +188,20 @@ export async function createApp(opts = {}) {
   registerReactions(app);
   registerUploads(app);
   registerPreview(app);
+  registerBackups(app);
 
   await hashPassword('warm-up'); // primes the scrypt thread pool so the first login is not slower than the rest
   db.run('DELETE FROM sessions WHERE expires_at <= ?', Date.now());
-  const sweeper = setInterval(() => db.run('DELETE FROM sessions WHERE expires_at <= ?', Date.now()), 3600000);
+  // both housekeeping jobs rest while a restore replaces the data (app.maintenance) — they write to the database; exposed on `app` for the tests
+  app.sweepSessions = () => { if (!app.maintenance) db.run('DELETE FROM sessions WHERE expires_at <= ?', Date.now()); };
+  const sweeper = setInterval(app.sweepSessions, 3600000);
   sweeper.unref();
 
   const seeded = runSeed(app, { mode: config.seed, dir: app.seedDir });
 
   // Orphaned uploads (never attached, or whose post is gone) are removed after 24 h — on start and every 6 h.
   const gcOpts = opts.uploadGcMaxAgeMs != null ? { maxAgeMs: opts.uploadGcMaxAgeMs } : {};
-  const runGc = () => { try { app.gcUploads(gcOpts); } catch (e) { if (!app.quiet) console.error('[edulet] upload gc failed', e); } };
+  const runGc = app.runGc = () => { if (app.maintenance) return; try { app.gcUploads(gcOpts); } catch (e) { if (!app.quiet) console.error('[edulet] upload gc failed', e); } };
   runGc();
   const gcTimer = setInterval(runGc, 6 * 3600000);
   gcTimer.unref();

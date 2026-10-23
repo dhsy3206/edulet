@@ -1,0 +1,115 @@
+/* 저장하기 / 불러오기 (views/backup-dialog.js, header buttons in views/shell.js). Own file on purpose: app.css is edited by other work.
+   Only tokens from base.css are used for surfaces and text, and tinted boxes are mixed from tokens, so a themed (dark) :root needs no change here. */
+
+/* ───────── header buttons ───────── */
+.app-backup { display: flex; align-items: center; gap: 2px; margin-left: 4px; padding-left: 8px; border-left: 1px solid var(--border); }
+.app-backup:empty { display: none; }
+.app-backup-btn { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; cursor: pointer; white-space: nowrap; }
+.app-backup-btn .icon { color: var(--text-3); }
+.app-backup-btn:hover .icon { color: var(--brand); }
+
+@media (max-width: 640px) {
+  /* the nav links are dropped on narrow screens; these two stay, as icons */
+  .app-backup { margin-left: 0; padding-left: 4px; gap: 0; }
+  .app-backup-btn { width: 40px; height: 40px; padding: 0; justify-content: center; }
+  .app-backup-label { display: none; }
+}
+
+/* ───────── dialog ───────── */
+.bk { word-break: keep-all; overflow-wrap: anywhere; }
+.bk .modal-body { padding-bottom: 12px; }
+.bk-actions { border-top: 1px solid var(--border); padding-top: 12px; flex-wrap: wrap; }
+.bk-actions[hidden] { display: none; }
+/* while something is being changed on the server the dialog cannot be dismissed: no X, buttons look inert */
+.bk-locked .modal-head .btn-icon { display: none; }
+.bk-locked { cursor: progress; }
+.bk-locked .bk-actions .btn { cursor: progress; }
+
+.bk-content { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.bk-h { font-size: 17px; font-weight: 800; line-height: 1.35; outline: none; }
+.bk-h4 { font-size: 13px; font-weight: 800; color: var(--text-2); margin-top: 6px; }
+.bk-head-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; }
+.bk-head-row .bk-h { flex: 1 1 auto; min-width: 0; }
+.bk-lead { color: var(--text-2); line-height: 1.6; }
+.bk-sub { font-size: 13px; margin-top: -4px; }
+.bk-foot { margin-top: 2px; }
+.bk-after { line-height: 1.55; }
+
+.bk-last, .bk-now { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); font-size: 14px; line-height: 1.5; }
+.bk-last-k { font-size: 12px; font-weight: 800; color: var(--text-3); }
+
+.bk-working { display: flex; align-items: center; gap: 12px; padding: 14px 4px; font-weight: 700; color: var(--text); }
+.bk-done { display: flex; align-items: center; gap: 10px; color: var(--brand); }
+.bk-done .bk-h { color: var(--text); }
+.bk-inline-btn { align-self: flex-start; margin-top: 8px; }
+.bk-problem:empty { display: none; }
+
+/* tinted notes */
+.bk-box { padding: 11px 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.bk-box strong { color: var(--text); }
+.bk-box.is-ok { background: var(--brand-soft); border-color: transparent; }
+.bk-box.is-warn { background: #fff7e0; border-color: #f3dc9a; color: #6b4500; }
+.bk-box.is-warn strong { color: inherit; }
+.bk-box.is-error { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
+.bk-box.is-error strong { color: inherit; }
+@supports (background: color-mix(in srgb, red 10%, white)) {
+  .bk-box.is-warn { background: color-mix(in srgb, var(--warn) 12%, var(--surface)); border-color: color-mix(in srgb, var(--warn) 35%, var(--surface)); color: color-mix(in srgb, var(--warn) 78%, var(--text)); }
+  .bk-box.is-ok { background: color-mix(in srgb, var(--brand) 12%, var(--surface)); }
+  .bk-box.is-error { background: color-mix(in srgb, var(--danger) 11%, var(--surface)); color: color-mix(in srgb, var(--danger) 80%, var(--text)); }
+}
+.bk-warn-list { margin: 6px 0 0; padding-left: 1.2em; }
+.bk-warn-list li + li { margin-top: 3px; }
+
+.bk-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 14px; }
+.bk-facts dt { font-size: 12px; font-weight: 800; color: var(--text-3); padding-top: 2px; }
+.bk-facts dd { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+
+.bk-points { margin: 0; padding-left: 1.25em; display: flex; flex-direction: column; gap: 6px; color: var(--text-2); line-height: 1.55; }
+.bk-points strong { color: var(--text); }
+
+/* ───────── the list of saved copies ───────── */
+.bk-list { display: flex; flex-direction: column; gap: 8px; margin: 2px 0; }
+.bk-opt { display: flex; align-items: center; gap: 10px; padding: 11px 12px 11px 14px; border: 1.5px solid var(--border); border-radius: 14px; background: var(--surface); cursor: pointer; transition: border-color 0.12s, background 0.12s; }
+.bk-opt:hover { border-color: color-mix(in srgb, var(--text-3) 55%, var(--surface)); box-shadow: var(--shadow-1); }
+.bk-opt[aria-selected='true'] { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; background: color-mix(in srgb, var(--brand) 6%, var(--surface)); }
+.bk-opt:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.bk-opt.is-auto { border-style: dashed; }
+.bk-opt-main { flex: 1; min-width: 0; }
+.bk-opt-top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.bk-opt-when { font-weight: 800; }
+.bk-opt-ago { font-size: 13px; }
+.bk-opt-sub { margin-top: 3px; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.bk-opt-go { color: var(--text-3); flex: none; }
+.bk-opt:hover .bk-opt-go, .bk-opt[aria-selected='true'] .bk-opt-go { color: var(--brand); }
+.chip.bk-chip-auto { background: var(--brand-soft); color: var(--brand); }
+@supports (background: color-mix(in srgb, red 10%, white)) {
+  .chip.bk-chip-auto { background: color-mix(in srgb, var(--brand) 14%, var(--surface)); }
+}
+
+/* ───────── preview: comparison + boards ───────── */
+.bk-headline { font-weight: 800; line-height: 1.55; }
+.bk-cmp { width: 100%; border-collapse: collapse; font-size: 14px; }
+.bk-cmp th, .bk-cmp td { padding: 7px 8px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.bk-cmp thead th { font-size: 12px; color: var(--text-3); font-weight: 800; }
+.bk-cmp tbody th { text-align: left; font-weight: 700; white-space: normal; }
+.bk-cmp th:first-child, .bk-cmp td:first-child { text-align: left; }
+.bk-delta { font-weight: 700; color: var(--text-3); }
+.bk-delta.is-less { color: var(--warn); }
+.bk-delta.is-more { color: var(--brand); }
+.bk-boards { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 12px; max-height: 190px; overflow: auto; }
+.bk-boards li { padding: 8px 12px; font-size: 14px; line-height: 1.45; }
+.bk-boards li + li { border-top: 1px solid var(--border); }
+.bk-board-t { font-weight: 700; overflow-wrap: anywhere; }
+
+@media (max-width: 480px) {
+  .bk .modal-body { padding-left: 16px; padding-right: 16px; }
+  .bk .modal-head { padding-left: 16px; }
+  .bk-actions { padding-left: 16px; padding-right: 16px; }
+  .bk-cmp th, .bk-cmp td { padding: 6px 4px; font-size: 13px; }
+  .bk-cmp thead th { font-size: 11px; }
+  .bk-facts { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .bk-facts dd { margin-bottom: 8px; }
+  .bk-actions { flex-wrap: nowrap; }
+  .bk-actions .btn { flex: 0 0 auto; padding: 6px 12px; white-space: normal; text-align: center; line-height: 1.25; min-height: 44px; min-width: 0; }
+  .bk-actions .btn-primary { flex: 1 1 0; }
+}

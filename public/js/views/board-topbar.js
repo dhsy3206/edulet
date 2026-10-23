@@ -21,7 +21,7 @@ export function simpleBar() {
  * Full bar. Returns { el, update(), updatePresence(), destroy() }.
  * Call update() after snapshots (role may have changed) and updatePresence() on presence events.
  */
-export function createTopbar(ctl, { onShare, onSettings }) {
+export function createTopbar(ctl, { onShare, onExport, onSettings }) {
   const uc = userControl();
 
   /* search: the input itself is the toggle (collapsed = a 36px pill with an icon) */
@@ -65,6 +65,8 @@ export function createTopbar(ctl, { onShare, onSettings }) {
   }, icon('play-circle', { size: 18 }), h('span', { class: 'bp-btn-label' }, '슬라이드쇼'));
   const shareBtn = h('button', { type: 'button', class: 'bp-btn', 'aria-label': '공유', onClick: onShare },
     icon('share', { size: 18 }), h('span', { class: 'bp-btn-label' }, '공유'));
+  const exportBtn = h('button', { type: 'button', class: 'bp-btn bp-btn-export', 'aria-label': '내보내기', title: '파일로 내보내기 (HTML·JSON·CSV)', dataset: { role: 'topbar-export' }, onClick: onExport },
+    icon('download', { size: 18 }), h('span', { class: 'bp-btn-label' }, '내보내기'));
   const settingsBtn = h('button', { type: 'button', class: 'bp-btn bp-btn-icon', 'aria-label': '설정', title: '보드 설정', onClick: onSettings },
     icon('settings', { size: 18 }));
   const presence = h('div', { class: 'bp-presence', role: 'group', dataset: { role: 'presence' } });
@@ -72,7 +74,7 @@ export function createTopbar(ctl, { onShare, onSettings }) {
   const bar = h('header', { class: 'bp-topbar' },
     // presence sits left of the buttons so avatars joining/leaving never move what you are about to click
     h('nav', { class: 'bp-topbar-in', 'aria-label': '보드 메뉴' }, logoLink('bp-logo'), h('span', { class: 'spacer' }),
-      presence, search, slideshowBtn, shareBtn, uc.el));
+      presence, search, slideshowBtn, shareBtn, exportBtn, uc.el));
 
   function updatePresence() {
     const list = ctl.state.presence || [];
@@ -90,7 +92,7 @@ export function createTopbar(ctl, { onShare, onSettings }) {
   function update() {
     // only admins get the button (removed, not just hidden)
     if (!ctl.can('admin')) settingsBtn.remove();
-    else if (!settingsBtn.isConnected) shareBtn.after(settingsBtn);
+    else if (!settingsBtn.isConnected) exportBtn.after(settingsBtn);
     updatePresence();
   }
 

@@ -1,13 +1,6 @@
 // SQLite (node:sqlite) wrapper + sequential migrations (PRAGMA user_version).
-// node:sqlite prints an ExperimentalWarning on load; filter just that one.
-const origEmit = process.emitWarning;
-process.emitWarning = function (w, ...rest) {
-  const msg = typeof w === 'string' ? w : (w && w.message) || '';
-  if (/SQLite/i.test(msg)) return;
-  return origEmit.call(process, w, ...rest);
-};
-const { DatabaseSync } = await import('node:sqlite');
-process.emitWarning = origEmit;
+// node:sqlite is loaded in sqlite.js (it mutes the one ExperimentalWarning on load and nothing else).
+import { DatabaseSync } from './sqlite.js';
 
 const MIGRATIONS = [
   /* v1 */ `
@@ -110,22 +103,32 @@ CREATE UNIQUE INDEX idx_users_google_sub ON users(google_sub) WHERE google_sub I
 `,
 ];
 
+/** The newest schema version this server knows (= how many migrations there are). openDb does not refuse a NEWER database, so callers
+ *  that take a database from elsewhere (server/restore.js: a backup made by a later Edulet) must compare `PRAGMA user_version` with this. */
+export const SCHEMA_VERSION = MIGRATIONS.length;
+
 const norm = (p) => p.map((v) => (v === undefined ? null : v === true ? 1 : v === false ? 0 : v));
 
 export function openDb(file) {
   const raw = new DatabaseSync(file);
-  raw.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;');
-  const ver = raw.prepare('PRAGMA user_version').get().user_version;
-  for (let v = ver; v < MIGRATIONS.length; v++) {
-    raw.exec('BEGIN');
-    try {
-      raw.exec(MIGRATIONS[v]);
-      raw.exec(`PRAGMA user_version = ${v + 1}`);
-      raw.exec('COMMIT');
-    } catch (e) {
-      raw.exec('ROLLBACK');
-      throw e;
+  try {
+    raw.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;');
+    const ver = raw.prepare('PRAGMA user_version').get().user_version;
+    for (let v = ver; v < MIGRATIONS.length; v++) {
+      raw.exec('BEGIN');
+      try {
+        raw.exec(MIGRATIONS[v]);
+        raw.exec(`PRAGMA user_version = ${v + 1}`);
+        raw.exec('COMMIT');
+      } catch (e) {
+        try { raw.exec('ROLLBACK'); } catch { /* already rolled back */ }
+        throw e;
+      }
     }
+  } catch (e) {
+    // a database that cannot be opened/migrated must not leave its file locked behind us (a restore deletes the temp copy right after)
+    try { raw.close(); } catch { /* already closed */ }
+    throw e;
   }
 
   const cache = new Map();

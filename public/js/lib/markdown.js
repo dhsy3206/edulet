@@ -5,16 +5,29 @@ import { h } from './h.js';
 // Only ASCII URL characters: Korean text glued to a URL stays outside the link.
 const TOKEN = /(\*\*[^*\n]+?\*\*)|(\*[^*\n]+?\*)|(`[^`\n]+`)|(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/g;
 
-function trimUrl(url) {
-  let u = url;
-  let tail = '';
-  while (/[.,;:!?'")\]]$/.test(u)) {
-    // keep a closing paren that balances an opening one inside the URL
-    if (u.endsWith(')') && (u.match(/\(/g) || []).length >= (u.match(/\)/g) || []).length) break;
-    tail = u.slice(-1) + tail;
-    u = u.slice(0, -1);
+// A URL longer than this is not made a link (text instead) — checked BEFORE trimming, so the trimming below can never be fed a huge tail.
+// (Keep in step with public/js/lib/export-html.js, which writes the same rules as strings.)
+const URL_MAX = 2048;
+const URL_TAIL = new Set(['.', ',', ';', ':', '!', '?', "'", '"', ')', ']']);
+// Punctuation that ends a sentence rather than the address is cut off the end — in ONE pass (the brackets are counted once and given up one
+// by one; a ")" is kept while the address still has more "(" than ")" left, e.g. a Wikipedia title). Same rule as always, linear in the length.
+export function trimUrl(url) {
+  let end = url.length;
+  let open = 0;
+  let close = 0;
+  for (let i = 0; i < end; i++) {
+    const ch = url.charCodeAt(i);
+    if (ch === 40) open++;
+    else if (ch === 41) close++;
   }
-  return [u, tail];
+  while (end > 0 && URL_TAIL.has(url[end - 1])) {
+    if (url[end - 1] === ')') {
+      if (open >= close) break;
+      close--;
+    }
+    end--;
+  }
+  return [url.slice(0, end), url.slice(end)];
 }
 
 export function linkEl(url, label) {
@@ -32,9 +45,12 @@ function inline(text) {
     else if (m[2]) out.push(h('em', null, m[2].slice(1, -1)));
     else if (m[3]) out.push(h('code', null, m[3].slice(1, -1)));
     else if (m[4]) {
-      const [u, tail] = trimUrl(m[4]);
-      out.push(linkEl(u));
-      if (tail) out.push(tail);
+      if (m[4].length > URL_MAX) out.push(m[4]);
+      else {
+        const [u, tail] = trimUrl(m[4]);
+        out.push(linkEl(u));
+        if (tail) out.push(tail);
+      }
     }
     last = m.index + m[0].length;
   }

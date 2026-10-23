@@ -95,6 +95,10 @@ export function boardPage(root, params) {
         if (sharePanel) sharePanel.close();
         sharePanel = openSharePanel(ctl);
       },
+      onExport: () => {
+        if (sharePanel) sharePanel.close();
+        sharePanel = openSharePanel(ctl, { section: 'export' });
+      },
       onSettings: () => {
         settingsHandle = toggleSettingsPanel(ctl);
       },

@@ -6,6 +6,7 @@ import { modal, popover, avatar, icon, toast } from '../lib/ui.js';
 import { LIMITS } from '../lib/constants.js';
 import { withBase, stripBase } from '../lib/base.js';
 import { isMember } from './common.js';
+import { backupAvailable, openSaveDialog, openRestoreDialog } from './backup-dialog.js'; // (backup-dialog.js imports openAuthModal back: only used when called)
 
 export const AVATAR_COLORS = [
   '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0d9488', '#0284c7',
@@ -344,6 +345,12 @@ function openUserMenu(anchor) {
     { heading: me.displayName + (me.isGuest ? ' (게스트)' : '') },
     { label: '내 보드', icon: 'layout', onClick: () => router.go('/dashboard') },
     { label: me.isGuest ? '이름 바꾸기' : '프로필', icon: 'user', onClick: () => openProfileModal() },
+    // the server PC's operator only (`/config.backup.available`) — also reachable from a board, which has no header nav
+    ...(backupAvailable() ? [
+      { separator: true },
+      { label: '저장하기', icon: 'save', onClick: () => openSaveDialog({ returnFocus: anchor }) },
+      { label: '불러오기', icon: 'history', onClick: () => openRestoreDialog({ returnFocus: anchor }) },
+    ] : []),
     { separator: true },
     { label: '로그아웃', icon: 'logout', onClick: doLogout },
   ]);

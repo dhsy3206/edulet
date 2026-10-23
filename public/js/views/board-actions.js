@@ -3,6 +3,7 @@ import { h } from '../lib/h.js';
 import { api } from '../lib/api.js';
 import { router } from '../lib/router.js';
 import { modal, toast, confirmDialog, copyText } from '../lib/ui.js';
+import { exportBoardAsHtml, describeResult, exportErrorText, formatSize, isAbort } from '../lib/export-offline.js';
 import { requireLogin } from './auth.js';
 import { boardPath, boardUrl } from './common.js';
 
@@ -19,6 +20,27 @@ export async function duplicateBoard(slug, withPosts) {
   toast('내 보드로 복제했어요.', 'success');
   router.go(boardPath(r.board.slug));
   return r.board;
+}
+
+/**
+ * Save a board as one offline .html file with the default options (pictures shrunk to 1600 px, attachments included) — for menus
+ * without a settings dialog. Progress is a toast. One export per board at a time.
+ */
+const exporting = new Set();
+export async function exportBoardHtmlFlow(board) {
+  if (exporting.has(board.slug)) return toast('이 보드는 지금 내보내는 중이에요.', 'info');
+  exporting.add(board.slug);
+  const progress = toast(`“${board.title}” HTML 파일을 만드는 중…`, 'info', 10 * 60 * 1000);
+  try {
+    const r = await exportBoardAsHtml(board.slug, { onProgress: (p) => progress.update(p.label) });
+    const d = describeResult(r.summary);
+    toast(`HTML 파일을 내려받았어요 (${formatSize(r.summary.size)}). ${d.skippedText}`.trim(), r.summary.skipped.length ? 'info' : 'success', r.summary.skipped.length ? 8000 : 3500);
+  } catch (e) {
+    if (!isAbort(e)) toast(exportErrorText(e), 'error', 6000);
+  } finally {
+    progress();
+    exporting.delete(board.slug);
+  }
 }
 
 /** Ask whether to copy posts too, then duplicate (login required). */

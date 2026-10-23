@@ -65,6 +65,8 @@ const ICONS = {
   list: [P('M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01')],
   wall: [R(3, 3, 8, 11, 1), R(13, 3, 8, 6, 1), R(13, 11, 8, 10, 1), R(3, 16, 8, 5, 1)],
   chat: [P('M4 5h16v11H9l-5 4z')],
+  save: [P('M5 4h11l4 4v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z'), P('M8 4v5h7V4M8 20v-6h8v6')],
+  history: [P('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'), P('M12 7.5V12l3 2')],
   canvas: [R(3, 3, 18, 18, 2, { 'stroke-dasharray': '3 3' }), R(6, 6, 6, 5, 1), R(12, 13, 6, 5, 1)],
 };
 
@@ -182,6 +184,7 @@ export function toast(message, kind = 'info', ms = 3500) {
   };
   setTimeout(kill, ms);
   t.addEventListener('click', kill);
+  kill.update = (text) => { t.textContent = text; }; // a long-running toast (progress) can change its wording
   return kill;
 }
 

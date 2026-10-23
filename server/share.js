@@ -7,8 +7,16 @@ const MAX_LAN = 4;
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 // adapters that other devices on the Wi-Fi/LAN cannot reach: they sort after real ones (a virtual adapter is a worse first guess)
 const VIRTUAL_NIC = /vethernet|virtualbox|vbox|vmware|vmnet|hyper-v|wsl|docker|virbr|veth|tailscale|zerotier|bluetooth|npcap/i;
-// headers a reverse proxy or tunnel adds; a request carrying any of them did not come straight from a browser on this PC
-const PROXY_HEADER = /^(x-forwarded-|forwarded$|via$|x-original-forwarded-for$|x-real-ip$|x-client-ip$|x-cluster-client-ip$|x-azure-clientip$|x-arr-clientip$|cf-connecting-ip$|true-client-ip$|fastly-client-ip$)/;
+// Headers a reverse proxy, CDN or tunnel adds; a request carrying any of them did not come straight from a browser on this PC.
+// This is a DENY LIST and cannot be complete: a forwarder that adds NO header at all (netsh portproxy, `ssh -R`, socat, a dumb TCP
+// relay running on this same PC) is indistinguishable from the operator — the connection then really does arrive from 127.0.0.1.
+// Behind any proxy or tunnel set PUBLIC_URL (that turns the menu off) — CONTRACT §5 "저장하기·불러오기".
+const PROXY_HEADER = new RegExp('^(?:' + [
+  'x-forwarded', 'forwarded$', 'via$', 'x-original-forwarded-for$',
+  'x-real-ip$', 'x-client-ip$', 'client-ip$', 'proxy-client-ip$', 'wl-proxy-client-ip$', 'x-originating-ip$', 'x-remote-ip$', 'x-remote-addr$',
+  'x-proxyuser-ip$', 'x-true-client-ip$', 'true-client-ip$', 'fastly-client-ip$', 'fly-client-ip$', 'x-cluster-', 'x-azure-', 'x-arr-',
+  'cf-', 'x-envoy-', 'x-amz', 'x-appengine-', 'x-vercel-', 'x-ms-', 'x-nginx-', 'x-ngrok', 'ngrok-', 'x-tunnel', 'cdn-loop$', 'x-akamai', 'akamai-', 'x-sucuri', 'x-scheme$', 'x-host$', 'x-original-host$', 'x-original-url$', 'x-rewrite-url$', 'front-end-https$', 'proxy-connection$', 'proxy-authorization$',
+].join('|') + ')');
 
 /** Dotted quad -> [a,b,c,d], or null when it is not a valid IPv4 address. */
 function parseIpv4(s) {
@@ -94,19 +102,29 @@ export function lanOrigins(app, port) {
 }
 
 /**
- * May this request be told the server's LAN addresses? All of these must hold (CONTRACT §5):
- *  - no public address is configured (PUBLIC_URL wins), and the server is bound beyond loopback;
+ * Is this request demonstrably coming from someone sitting at the machine that runs the server — "the server PC's operator"? All of these:
+ *  - TRUST_PROXY is off (turning it on is the operator's statement that a proxy sits in front);
+ *  - no public address is configured (PUBLIC_URL wins);
  *  - the request names this PC as localhost (Host header) — DNS-rebinding pages and people on other devices name something else;
- *  - it carries no proxy/tunnel header, and its client address (clientIp, TRUST_PROXY aware) is loopback.
- * Anything doubtful means no: a wrong "no" only costs the teacher a hint, a wrong "yes" tells a stranger the server's inner address.
+ *  - it carries no proxy/tunnel header (see PROXY_HEADER: a deny list, with the limit stated there), and the socket peer is loopback.
+ * Anything doubtful means no: a wrong "no" only costs the teacher a hint, a wrong "yes" tells a stranger the server's inner address —
+ * or, for the 저장하기/불러오기 menu (server/backups.js), lets a stranger replace the data.
  */
-function lanVisible(app, req) {
-  const cfg = app.config;
+export function localOperator(app, req) {
+  if (app.config.trustProxy) return false; // TRUST_PROXY=1 says "a proxy is in front": the socket peer is the proxy, never the person at the screen
   if (publicOrigin(app)) return false;
-  if (isLoopbackBind(cfg.host)) return false;
   if (viaProxy(req)) return false;
   if (!isLoopbackHostHeader(req.headers?.host)) return false;
   return isLoopbackIp(clientIp(app, req));
+}
+
+/**
+ * May this request be told the server's LAN addresses? `localOperator` (CONTRACT §5), and the server is bound beyond loopback
+ * (a loopback-only server has no LAN address to tell).
+ */
+function lanVisible(app, req) {
+  if (isLoopbackBind(app.config.host)) return false;
+  return localOperator(app, req);
 }
 
 /**

@@ -6,10 +6,11 @@ import { spawnSync } from 'node:child_process';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname, extname, normalize, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { launchBrowser, findChrome } from '../tools/cdp.mjs';
 import { listenOnGoodPort } from '../tools/ports.mjs';
 import { buildDemoBoard, makePng } from './demo-board.mjs';
+import { connectBrowser, watchDownloads } from './rawcdp.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -433,6 +434,8 @@ try {
     await page.click('[data-role="create-submit"]');
     await page.waitFor(`/^\\/edulet\\/b\\/[a-z0-9]+$/.test(location.pathname) && !!document.querySelector('[data-role="board-surface"]')`, { timeout: 15000 });
     const slug = (await pathOf(page)).split('/').pop();
+    // the surface exists a moment before its sections are drawn; under load (the whole suite) counting at once saw 0 — wait for them (a real failure still times out and fails the check below)
+    await page.waitFor(`document.querySelectorAll('[data-role="section-title"]').length === 3`, { timeout: 8000 }).catch(() => {});
     check('P3 KWL 템플릿 보드: shelf + 섹션 3개', (await page.eval(`document.querySelector('[data-role="board-surface"]').dataset.format`)) === 'shelf' && (await page.count('[data-role="section-title"]')) === 3, 'sections=' + (await page.count('[data-role="section-title"]')));
     await page.screenshot(join(OUT, 'pages-p3-kwl.png'));
 
@@ -670,6 +673,133 @@ try {
     check('P2b 콘솔 오류 없음(A,B)', pageErrors(A).length + pageErrors(B).length === 0, [...pageErrors(A), ...pageErrors(B)].join(' | ').slice(0, 300));
     allErrors.push(...pageErrors(A), ...pageErrors(B));
     await ctx.close();
+  });
+
+  /* ══════════ P3h: HTML 오프라인 내보내기가 정적 데모(서비스 워커 "서버")에서도 됨 — 실제로 내려받아 file:// 로 연다 ══════════ */
+  await step('P3h', async () => {
+    const dlDir = mkdtempSync(join(tmpdir(), 'edulet-pages-dl-'));
+    const raw = await connectBrowser(browser.port);
+    const ctx = await browser.newContext();
+    try {
+      const dl = await watchDownloads(raw, ctx.id, dlDir);
+      const page = await newPage(ctx, '/edulet/');
+      await appReady(page, '.home-hero');
+      const demo = await makeDemoBoardIn(page); // rows · 3 sections · 17 cards (13 pictures, 1 PDF) · 2 comments — read by the visitor below
+      await page.goto(ORIGIN + demo.path);
+      await page.waitFor('[data-post-id]', { timeout: 20000 });
+      await page.eval('window.__EDULET_HIDE_MS = 3600000; 1');
+      await sleep(600);
+      check('P3h 데모: 상단 막대에 "내보내기" 버튼', (await page.count('[data-role="topbar-export"]')) === 1);
+      await page.click('[data-role="topbar-export"]');
+      await page.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(600);
+      const f = await dl.next(() => page.click('[data-role="export-html"]'), { timeout: 90000 });
+      const html = readFileSync(f.path, 'utf8');
+      check('P3h 데모: edulet-<slug>-YYYYMMDD.html 이 내려받아짐', new RegExp(`^edulet-${demo.slug}-\\d{8}\\.html$`).test(f.suggested) && f.bytes > 20000, `${f.suggested} ${f.bytes}`);
+      check('P3h 데모: 파일에 CSP 메타가 있고 <script 가 없으며 /edulet/ 주소를 가리키는 src·href 가 없음', html.includes(`content="default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"`) && !/<script/i.test(html) && !/(src|href)="\/edulet/.test(html));
+
+      const view = await ctx.newPage('about:blank');
+      const tab = await raw.attach(view.targetId);
+      const requests = [];
+      const logs = [];
+      tab.on('Network.requestWillBeSent', (p) => requests.push(p.request.url));
+      tab.on('Log.entryAdded', (p) => logs.push(p.entry));
+      await tab.send('Network.enable');
+      await tab.send('Log.enable');
+      await view.goto(pathToFileURL(f.path).href);
+      await view.waitFor(`document.querySelectorAll('article.card').length === ${demo.total}`, { timeout: 20000 });
+      await view.eval(`(async () => { for (const i of document.images) { i.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 30)); } window.scrollTo(0, 0); return 1; })()`);
+      await view.waitFor(`[...document.images].every((i) => i.complete)`, { timeout: 15000 });
+      const p = await view.eval(`(() => ({
+        cards: document.querySelectorAll('article.card').length, sections: document.querySelectorAll('.sec-title').length, h1: document.querySelector('h1').textContent,
+        imgs: [...document.images].map((i) => i.naturalWidth), scripts: document.scripts.length, comments: document.querySelectorAll('.cm').length,
+        pdf: document.querySelector('a.file[download]')?.getAttribute('download'), pdfHref: (document.querySelector('a.file[download]')?.getAttribute('href') || '').slice(0, 40),
+        badSrc: [...document.querySelectorAll('[src]')].filter((e) => !e.getAttribute('src').startsWith('data:')).length,
+      }))()`);
+      check('P3h 데모: 열어 본 파일에 카드 17장·구역 3개·댓글 2개·제목', p.cards === demo.total && p.sections === 3 && p.comments === 2 && p.h1.length > 0, JSON.stringify(p));
+      check('P3h 데모: 그림 13장이 실제로 보임(naturalWidth>0), src 는 전부 data:', p.imgs.length === 13 && p.imgs.every((w) => w > 0) && p.badSrc === 0, JSON.stringify(p.imgs));
+      check('P3h 데모: PDF 는 내려받기 링크(application/octet-stream)로 들어감', p.pdf === 'sample-doc.pdf' && p.pdfHref.startsWith('data:application/octet-stream;base64,'), p.pdf + ' ' + p.pdfHref);
+      const nonData = requests.filter((u) => !u.startsWith('data:'));
+      check('P3h 데모: 열어 본 파일의 네트워크 요청 0건(http 없음, data: 제외), 스크립트 0개, 콘솔·로그 오류 없음', p.scripts === 0 && nonData.every((u) => u.startsWith('file:')) && view.errors.length === 0 && !logs.some((e) => e.level === 'error' || e.source === 'security'), JSON.stringify([nonData.slice(0, 3), view.errors, logs.filter((e) => e.level === 'error').map((e) => e.text)]).slice(0, 300));
+      await view.screenshot(join(OUT, 'pages-p3h-file.png'));
+
+      // the demo's own files: /uploads/seed-<n>/… are fetched (through the worker, under /edulet) and embedded like any upload; an unknown
+      // /uploads/… shape is reported as "not included", never called an external picture. This build seeds no picture of its own, so the
+      // export JSON and the seed file are stood in for inside the page.
+      await front(page);
+      const seedPng = makePng(8, 8, [20, 120, 220]).toString('base64');
+      await page.eval(`(() => {
+        window.__seen = []; const f = window.fetch.bind(window);
+        const png = Uint8Array.from(atob(${JSON.stringify(seedPng)}), (c) => c.charCodeAt(0));
+        const post = (id, a) => ({ id, boardId: 1, sectionId: null, author: { id: 1, displayName: 'x', avatarColor: '#fff' }, title: 'p' + id, body: '', color: null, pinned: false, status: 'published', rank: id, createdAt: Date.now(), updatedAt: Date.now(), attachment: a, commentCount: 0, reactions: {}, comments: [] });
+        window.fetch = async (u, o) => {
+          const url = String(u); window.__seen.push(url);
+          if (url.includes('/export?format=json')) {
+            const d = await (await f(u, o)).json();
+            d.posts.push(post(9001, { kind: 'image', url: '/uploads/seed-9/seed-pic.png', name: 'seed-pic.png', mime: 'image/png', size: png.length }), post(9002, { kind: 'image', url: '/uploads/odd/x.png', name: 'x.png' }));
+            return new Response(JSON.stringify(d), { status: 200, headers: { 'Content-Type': 'application/json' } });
+          }
+          if (url.includes('/uploads/seed-9/')) return new Response(png, { status: 200, headers: { 'Content-Type': 'image/png' } });
+          return f(u, o);
+        };
+        return 1;
+      })()`);
+      const seeded = await page.eval(`(async () => {
+        const m = await import('/edulet/js/lib/export-offline.js');
+        const r = await m.buildBoardHtml(${JSON.stringify(demo.slug)}, {});
+        const html = await r.blob.text();
+        return { images: r.summary.images, skipped: r.summary.skipped, seen: window.__seen, external: html.includes('외부 그림'), embedded: html.includes('alt="seed-pic.png"') };
+      })()`);
+      check('P3h 데모: /uploads/seed-<n>/… 도 /edulet 아래로 받아서 담음(그림 14장째)', seeded.embedded && seeded.images === 14 && seeded.seen.includes('/edulet/uploads/seed-9/seed-pic.png'), JSON.stringify({ n: seeded.images, embedded: seeded.embedded }));
+      check('P3h 데모: 모르는 /uploads/odd/… 는 요청하지 않고 "담지 못한 파일" 로 올리며 "외부 그림" 이라고 하지 않음', seeded.skipped.some((s) => s.name === 'x.png' && s.reason === 'failed') && !seeded.seen.some((u) => u.includes('/uploads/odd/')) && !seeded.external, JSON.stringify(seeded.skipped));
+      await page.reload();
+      await page.waitFor('[data-post-id]', { timeout: 20000 });
+
+      // the dashboard menu line (registered user, default options, a toast)
+      await front(page);
+      const reg = await call(page, 'POST', '/auth/register', { username: 'dashexp' + Math.random().toString(36).slice(2, 6), password: 'password-1234', displayName: '내보내기 교사' });
+      if (reg.status !== 200 && reg.status !== 201) throw new Error('register failed ' + JSON.stringify(reg));
+      const nb = await call(page, 'POST', '/boards', { title: '데모 대시보드 내보내기', format: 'wall' });
+      const nslug = nb.body.board.slug;
+      await call(page, 'POST', `/boards/${nslug}/posts`, { title: '데모에서 메뉴로 내보낸 글', body: '본문' });
+      await page.goto(APP + '/dashboard');
+      await page.waitFor(`document.querySelector('.dash-card[data-slug="${nslug}"]')`, { timeout: 15000 });
+      await page.click(`.dash-card[data-slug="${nslug}"] .dash-more`);
+      await page.waitFor('.popover .menu-item');
+      const at = await page.eval(`(() => { const e = [...document.querySelectorAll('.popover .menu-item')].find((b) => b.innerText.includes('HTML 로 내보내기')); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      check('P3h 데모: 대시보드 카드 메뉴에 "HTML 로 내보내기"', !!at);
+      const f2 = await dl.next(() => page.mouse(at.x, at.y), { timeout: 60000 });
+      const html2 = readFileSync(f2.path, 'utf8');
+      check('P3h 데모: 대시보드 메뉴로 바로 내려받음(글 포함)', new RegExp(`^edulet-${nslug}-\\d{8}\\.html$`).test(f2.suggested) && html2.includes('데모에서 메뉴로 내보낸 글') && !/<script/i.test(html2), f2.suggested);
+      check('P3h 데모 화면 콘솔 오류 없음', pageErrors(page).length === 0, pageErrors(page).join(' | ').slice(0, 300));
+      allErrors.push(...pageErrors(page));
+    } finally {
+      raw.close();
+      await ctx.close().catch(() => {});
+      try { rmSync(dlDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+
+  /* ══════════ P6: 저장하기·불러오기 do not exist in the demo (no server PC, no backups folder) ══════════ */
+  await step('P6', async () => {
+    const ctx = await browser.newContext();
+    const page = await newPage(ctx, '/edulet/');
+    await appReady(page, '.home-hero');
+    const cfg = await call(page, 'GET', '/config');
+    check('P6 데모 /config.backup.available 은 false', !!cfg.body.backup && cfg.body.backup.available === false, JSON.stringify(cfg.body.backup));
+    check('P6 데모 첫 화면 헤더에 저장하기·불러오기 버튼이 없음', (await page.count('[data-role="backup-nav"] button')) === 0 && !(await page.eval(`[...document.querySelectorAll('.app-header button')].some((b) => /저장하기|불러오기/.test(b.innerText || b.getAttribute('aria-label') || ''))`)));
+    const reg = await call(page, 'POST', '/auth/register', { username: 'p6user' + Math.random().toString(36).slice(2, 7), password: 'password-1234', displayName: '데모 교사' });
+    if (reg.status !== 201 && reg.status !== 200) throw new Error('register failed ' + JSON.stringify(reg));
+    await page.goto(ORIGIN + '/edulet/dashboard');
+    await appReady(page, '.dash');
+    await page.waitFor('.app-uc-btn', { timeout: 10000 });
+    check('P6 데모 대시보드 헤더에도 버튼이 없음', (await page.count('[data-role="backup-nav"] button')) === 0);
+    await page.click('.app-uc-btn');
+    await page.waitFor('.popover');
+    const labels = await page.eval(`[...document.querySelectorAll('.popover .menu-item')].map((b) => b.innerText.trim())`);
+    check('P6 데모 사용자 메뉴에도 저장하기·불러오기가 없음(로그아웃은 있음)', !labels.includes('저장하기') && !labels.includes('불러오기') && labels.includes('로그아웃'), labels.join(','));
+    allErrors.push(...pageErrors(page));
+    await ctx.close().catch(() => {});
   });
 
   /* ══════════ P5: no console errors anywhere; nothing leaves the /edulet/ prefix ══════════ */

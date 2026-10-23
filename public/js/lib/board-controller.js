@@ -7,6 +7,7 @@ import { SECTIONED } from './constants.js';
 import { BASE } from './base.js';
 import { modal, toast } from './ui.js';
 import { plainText } from './markdown.js';
+import { backupState } from './backup-state.js';
 
 // Thresholds can be overridden from the page (window.__EDULET_HIDE_MS / __EDULET_SILENCE_MS) so e2e tests need not wait.
 const hideMs = () => (typeof window !== 'undefined' && window.__EDULET_HIDE_MS) || 15000;
@@ -17,7 +18,7 @@ const EVENTS = [
   'hello', 'ping', 'presence', 'board.updated', 'board.deleted', 'members.updated',
   'section.created', 'section.updated', 'section.moved', 'section.deleted',
   'post.created', 'post.updated', 'post.moved', 'post.deleted',
-  'comment.created', 'comment.deleted', 'reaction.updated',
+  'comment.created', 'comment.deleted', 'reaction.updated', 'reset',
 ];
 
 export function emptyReactions() {
@@ -60,6 +61,7 @@ export class BoardController {
     this._destroyed = false;
     this._needResync = false;
     this._reloading = null;
+    this._resetting = false; // the server replaced all its data (불러오기) and this page is about to reload
     this._lastEventAt = Date.now();
     this._suspended = false; // stream closed on purpose (tab hidden / page hidden)
     this._hideTimer = null;
@@ -149,7 +151,7 @@ export class BoardController {
     window.removeEventListener('online', this._onOnline);
   }
   _suspend() {
-    if (this._suspended || this._destroyed || this.state.status !== 'ready') return;
+    if (this._suspended || this._destroyed || this._resetting || this.state.status !== 'ready') return;
     this._suspended = true;
     this._needResync = true;
     clearTimeout(this._timer);
@@ -158,13 +160,13 @@ export class BoardController {
     this.state.connected = false; // no UI emit: nobody is looking
   }
   _resume(force = false) {
-    if (this._destroyed || this.state.status !== 'ready') return;
+    if (this._destroyed || this._resetting || this.state.status !== 'ready') return;
     if (!force && !this._suspended && this._es) return;
     this._suspended = false;
     this._restartStream();
   }
   _restartStream() {
-    if (this._destroyed) return;
+    if (this._destroyed || this._resetting) return;
     if (this._es) this._es.close();
     this._es = null;
     clearTimeout(this._timer);
@@ -234,7 +236,7 @@ export class BoardController {
   }
 
   _connect() {
-    if (this._destroyed || this._es) return;
+    if (this._destroyed || this._resetting || this._es) return;
     const es = new EventSource(`${BASE}/api/boards/${encodeURIComponent(this.slug)}/events`);
     this._es = es;
     es.onopen = () => {
@@ -251,6 +253,7 @@ export class BoardController {
       this._emit('ui');
     };
     es.onerror = () => {
+      if (this._resetting) return; // the page is reloading: no retry loop of its own
       this.state.connected = false;
       this._needResync = true;
       this._resolveFirst();
@@ -283,9 +286,29 @@ export class BoardController {
     }
   }
 
+  /**
+   * `reset`: the server replaced ALL its data with a saved copy (저장하기·불러오기 → 불러오기, CONTRACT §6) and closes this stream. The board shown
+   * here may be a different board now (same slug, other content) or gone, and the session may be gone too: say so and reload. The tab that
+   * started the restore is the exception — its dialog shows the result first and then reloads by itself (`backupState.restoring`).
+   * The reload happens once (`_resetting`), and the new page connects normally (`hello`), so there is no reload loop.
+   */
+  _onReset() {
+    if (backupState.restoring || this._resetting || this._destroyed) return;
+    this._resetting = true;
+    clearTimeout(this._timer);
+    clearTimeout(this._hideTimer);
+    if (this._es) this._es.close();
+    this._es = null;
+    this.state.connected = false;
+    toast('저장본을 불러와서 화면을 새로 고쳐요.', 'info', 3000);
+    setTimeout(() => location.reload(), 1200);
+  }
+
   _onEvent(type, d) {
     const s = this.state;
     switch (type) {
+      case 'reset':
+        return this._onReset();
       case 'hello':
       case 'presence':
         s.presence = d.presence || [];

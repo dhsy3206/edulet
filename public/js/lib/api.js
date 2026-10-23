@@ -66,7 +66,8 @@ async function parse(res) {
   }
 }
 
-async function request(method, path, body) {
+// opts.timeout (ms): a long server-side job (저장하기·불러오기 copy a whole database) may need more than the default 20 s.
+async function request(method, path, body, opts) {
   const headers = { 'X-Client-Id': clientId };
   demoHeaders(headers);
   const init = { method, headers, credentials: 'same-origin' };
@@ -77,7 +78,7 @@ async function request(method, path, body) {
   // A silently dead link must not leave the UI waiting forever (buttons stuck on "올리는 중…").
   const ctl = new AbortController();
   init.signal = ctl.signal;
-  const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => ctl.abort(), (opts && opts.timeout) || REQUEST_TIMEOUT_MS);
   let res, data;
   try {
     res = await fetch(API + path, init);
@@ -99,8 +100,8 @@ async function request(method, path, body) {
 }
 
 export const api = {
-  get: (p) => request('GET', p),
-  post: (p, b = {}) => request('POST', p, b),
+  get: (p, o) => request('GET', p, undefined, o),
+  post: (p, b = {}, o) => request('POST', p, b, o),
   put: (p, b = {}) => request('PUT', p, b),
   patch: (p, b = {}) => request('PATCH', p, b),
   del: (p) => request('DELETE', p),

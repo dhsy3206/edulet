@@ -7,10 +7,10 @@
 | 명령 | 뜻 |
 |---|---|
 | `npm start` | 서버(포트 3000). 처음엔 시드 보드 1개(`/b/practice`) |
-| `npm test` | 단위·통합(브라우저 불필요, 약 50초). **379개** |
+| `npm test` | 단위·통합(브라우저 불필요, 약 2~3분). **528개**(2026-10-23 직접 실행: 기존 379 + 저장하기·불러오기 `test/restore.test.js` 70 + 내보내기 `test/export-html.test.js` 45·`test/export-hardening.test.js` 33 + 보정) |
 | `backup.cmd` · `node tools/backup.mjs [--data <dir>] [--out <dir>]` | **서버를 켠 채로** 안전한 백업(`backups/edulet-날짜-시간/`: `edulet.db` 스냅샷·`uploads/`·`BACKUP-INFO.txt`). 계약 CONTRACT §1 "백업" |
-| `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **111개** (`node e2e/run.mjs S8` 처럼 시나리오 이름으로 골라 돌릴 수 있다) |
-| `npm run build:pages` · `npm run e2e:pages` | GitHub Pages 정적 데모 빌드(`dist/`, gitignore) · 그 빌드를 `/edulet/` 아래 정적 서버로 띄워 확인. **97개** |
+| `npm run e2e` | 격리된 크롬 여러 개로 수락 시나리오(Chrome/Edge 필요). **267개**(2026-10-23 전체 실행: 기존 111 + 내보내기 S9 76 + 저장하기·불러오기 S10·S10b 80 — `node e2e/run.mjs S10` 은 둘 다 돈다) (`node e2e/run.mjs S8` 처럼 시나리오 이름으로 골라 돌릴 수 있다) |
+| `npm run build:pages` · `npm run e2e:pages` | GitHub Pages 정적 데모 빌드(`dist/`, gitignore) · 그 빌드를 `/edulet/` 아래 정적 서버로 띄워 확인. **113개**(2026-10-23 전체 실행: 기존 97 + 내보내기 P3h 12 + 저장하기·불러오기 메뉴가 데모에 없음 P6 4 — `node e2e/pages.mjs P3h`·`P6` 처럼 이름으로 고를 수 있다) |
 
 Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs --base /edulet`(안 붙이면 `/edulet` 이 경로로 바뀐다). 푸시는 `env -u GITHUB_TOKEN git push`(환경변수 토큰이 키링을 가린다). `main` 에 푸시하면 `pages.yml` 이 데모를 배포한다. CI(`ci.yml`)는 `npm test` 만 돌린다 — e2e 는 CI 에서 안 돈다(Chrome 경로 미검증).
 
@@ -24,7 +24,7 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 
 ## 구조
 
-`server/`(http.js 라우터·auth.js·google.js·boards/posts/…·realtime.js SSE·preview.js SSRF 방어·seed) · `public/js/{lib,views,board}` · `public/demo/`(Pages 워커 서버) · `seed/` · `test/`(node:test, `test/index.js` 가 `*.test.js` 를 모두 불러온다) · `e2e/{run,pages}.mjs` · `tools/{cdp,ports,build-pages,backup}.mjs` · `docs/`. 설정은 전부 환경변수 `EDULET_*`(`server/config.js`, 표는 CONTRACT §1).
+`server/`(http.js 라우터·auth.js·google.js·boards/posts/…·realtime.js SSE·preview.js SSRF 방어·seed·backup.js/backups.js/restore.js 저장하기·불러오기) · `public/js/{lib,views,board}` · `public/demo/`(Pages 워커 서버) · `seed/` · `test/`(node:test, `test/index.js` 가 `*.test.js` 를 모두 불러온다) · `e2e/{run,pages}.mjs` · `tools/{cdp,ports,build-pages,backup}.mjs` · `docs/`. 설정은 전부 환경변수 `EDULET_*`(`server/config.js`, 표는 CONTRACT §1).
 
 ## Google 로그인 (2026-10-22 추가, 서버 모드 전용)
 
@@ -40,6 +40,27 @@ Git Bash 에서 로컬 빌드는 `MSYS_NO_PATHCONV=1 node tools/build-pages.mjs 
 - 데모 워커 `/config` 는 `share:{origin:null,lan:[]}` 를 낸다(`sw-auth.js`) — 데모의 링크·QR 은 다른 기기에서 안 열린다는 것을 공유 창이 알려 준다. 게스트 입장 창에는 **"이름 없이 바로 참여"**(`참여자 NNN`, `board-controller.js` `ensureIdentity`).
 - e2e S8·S8b 는 `createApp({ host:'0.0.0.0', networkInterfaces })` 로 가짜 NIC 를 주입한다. **주의: 서버가 NIC 목록에서 127.x 를 거르므로 `127.0.0.2` 는 `share.lan` 에 안 들어가고**, S8 은 이 PC 의 실제 사설 IPv4(와이파이·유선)를 "다른 PC" 주소로 대신 쓴다(INFO 한 줄) — 소유자(localhost)와 "다른 PC"(LAN 주소, 쿠키가 따로)가 서로 다른 원점이 된다. 사설 IPv4 가 없는 PC(오프라인)에서는 S8 이 `share.lan` 검사부터 줄줄이 실패한다(e2e 는 CI 에 없다 — 로컬에서 네트워크에 연결하고 돌릴 것). 공유 창은 열 때마다 `/config` 를 다시 읽어(`store.refreshConfig`, 실패하면 기존 값 유지) 무선 IP 가 바뀌어도 새 주소로 링크·QR 을 만든다. 사용자용 한 장 안내는 `docs/server-mode.html`. 공유 창의 select·안내 상자·모바일 폭·적대적 `/config`(`javascript:`·경로·인증정보)도 여기서 본다.
 - 새 게스트가 들어오면 컨트롤러가 스냅샷을 다시 받는다(`_reload`). 첫 쓰기는 그 재로딩이 끝난 뒤에 보낸다(`_identity()`) — 안 그러면 쓰기보다 먼저 요청해 새 카드가 들어 있지 않은 스냅샷이 쓰기 응답보다 늦게 도착해 방금 쓴 카드가 자기 화면에서 지워지는 경합이 있었다(S8 의 "느린 스냅샷" 시험이 잡는다).
+
+## 저장하기·불러오기 (2026-10-23, 서버 모드 전용)
+
+- 서버 PC 의 localhost 로 연 화면의 헤더(저장하기·불러오기, 아이콘만으로 줄어듦)와 사용자 메뉴(보드 화면 포함)에서 연다. 화면 `public/js/views/backup-dialog.js`(저장 창·불러오기 창: 목록 → 미리보기 → 확인 → 진행 → 결과 → **전체 새로고침**), 헤더 `views/shell.js`, 메뉴 `views/auth.js`, SSE `reset` 처리 `lib/board-controller.js`(+ 공유 표식 `lib/backup-state.js`), 스타일 `css/backup.css`(app.css 와 따로). 서버·계약은 CONTRACT §5 "저장하기·불러오기"(`server/backups.js`·`restore.js`·`backup.js`), 시험 `test/restore.test.js`·e2e S10/S10b·pages P6.
+- **`localOperator` 게이트**: 메뉴는 `/config.backup.available === true` 일 때만 **그려지고**(안 그릴 때는 숨김이 아니라 제거 — `store.subscribe('config')` 로 바뀌면 다시 그린다), API 도 같은 판정으로 막는다(`backup_local_only`). `PUBLIC_URL`(공개 주소)·프록시/터널 헤더·localhost 가 아닌 Host·loopback 이 아닌 접속 IP 중 하나라도 있으면 false — **공개 주소를 설정한 서버는 서버 PC 에서 localhost 로 열어도 메뉴가 없다**(그때는 `backup.cmd`). Pages 데모는 항상 false(`sw-auth.js`). 비게스트 계정이 하나라도 있으면 로그인한 계정으로만(`member_required`) — 학생과 같이 쓰는 공용 서버 PC 에서는 그 PC 에서 가입한 누구나 쓸 수 있으니 `ALLOW_REGISTER=0` 권장(README·server-mode.html 에 적음).
+- **같은 연결 교체**: 불러오기는 살아 있는 DB 연결(`app.db.raw`)에서 한 트랜잭션으로 표를 비우고 채운다 — 연결을 닫고 다시 열지 않는다(다른 모듈이 `app.db` 래퍼·준비된 문장을 붙잡고 있음). 교체는 동기라 큰 DB 에서 서버가 잠깐 멈춘다. **점검 모드**(`app.maintenance`): 그동안 GET/HEAD 가 아닌 `/api` 요청은 503 `busy`(`/api/backups*` 는 뮤텍스 409), 읽기·SSE 는 계속, 업로드 정리·세션 청소 타이머는 쉰다.
+- **안전 저장 + `total_changes()`**: 불러오기 직전에 `before-restore` 저장본을 만들고(목록에 "자동 저장"), 그 사이 DB 에 쓰기가 있었으면(`total_changes` 가 달라짐) 다시 만들거나 `data_changed` 로 중단한다 — 데이터 손실을 막는 마지막 방어선이니 이 검사와 교체 사이에 `await` 를 넣지 마라. 업로드 파일은 이미 있는 것을 건드리지 않고 복사만 한다.
+- **세션 정책**: 저장본의 `sessions` 는 버리고, 교체 직전의 살아 있는 세션 중 같은 사람(id·created_at·is_guest·username·google_sub)이 교체 뒤에도 있는 것만 다시 넣는다 → 응답 `keptSession`. 그래서 같은 서버의 저장본이면 로그인이 유지되고, 다른 PC 의 저장본이면 저장본의 계정으로 다시 로그인해야 한다(화면은 이 경우 "홈으로 가기"). 비밀번호도 저장 당시로 돌아간다(확인 단계에 적음).
+- **401 을 쓰지 않는다**: `api.js` 는 401 마다 "세션이 끝났다"고 보고 로그아웃시킨다. 그래서 서버는 게이트 실패를 403(`member_required`·`backup_local_only`)으로 낸다 — 화면 시험(S10)이 게스트·다른 기기에서 이 응답들에 401 이 없고 게스트가 로그아웃되지 않음을 본다. 서버에 새 거절을 넣을 때도 401 은 금지.
+- **`backupHooks`**(`createApp` 시험 전용 옵션 — `afterValidate`·`afterStage`·`afterSafetySave`)는 불러오기가 단계 사이에 `await` 하는 곳에서 실패·쓰기·지연을 만들어 보는 길이다. e2e 는 `afterSafetySave` 로 진행 화면을 오래 붙잡는다(CDP 호출은 서버가 일하는 동안·다른 시험이 같이 돌 때 느려지니 넉넉히 — 12초).
+- **화면 함정**: ① 불러온 뒤 페이지 상태는 전부 낡았으니 **`location.assign`(전체 새로고침)** 으로 간다(SPA `router.go` 금지). 읽을 게 없으면 4.5초 뒤 자동(`window.__EDULET_BACKUP_MOVE_MS` 로 시험이 늘린다), 경고·로그인 필요가 있으면 단추를 누를 때까지 기다린다. ② **작업 중(저장·불러오기)에는 창을 닫을 수 없다** — `modal({ persistent })` 는 Esc·바깥 클릭만 막고 헤더 X 는 못 막으므로 창 틀(`createPanel`)이 `persistent` 를 켜 두고 Esc·바깥 클릭을 직접 처리하며 잠금(`bk-locked`) 동안 X 를 CSS 로 뺀다. ③ **SSE `reset`**: 서버가 불러오기 직후 모든 보드 연결에 보내고 닫는다 → 그 보드를 보던 탭은 토스트 뒤 1.2초에 한 번 `location.reload()`(루프 없음 — 새 연결은 정상 `hello`), **시작한 탭은 `backupState.restoring` 으로 무시**하고 자기 창이 결과를 보여 준 뒤 스스로 이동한다(실패하면 표식을 끈다). 보드가 아닌 화면(대시보드)에는 연결이 없어 reset 이 안 간다 — 시험은 시작 탭을 보드 화면에 두어야 이 표식을 본다(S10). ④ 미리보기는 요청마다 서버를 잠깐 붙잡으니 저장본마다 한 번만 묻고(창 동안 캐시) 한 번에 하나만 보낸다(`previewing`) — 화살표로 고르는 것만으로는 요청하지 않는다(Enter·클릭). 429 도 미리보기에서 날 수 있다(대기 시간 안내). ⑤ `api.js` 의 기본 요청 제한시간 20초는 큰 DB 의 저장·불러오기에 짧아 `api.post(경로, 본문, { timeout })` 으로 10분을 준다. ⑥ 서버가 준 경고 문장·보드 제목·저장본 이름은 DB 값이니 **텍스트 노드로만**(`innerHTML` 금지 — `h()` 만 쓴다).
+- **e2e 함정**: `tools/cdp.mjs` 의 `waitFor(식)` 은 괄호·`document.` 가 없는 식을 CSS 선택자로 착각해 조용히 시간 초과가 난다 → `(window.x === undefined)` 처럼 괄호로 시작한다. 로그인 창은 입력 전에 `document.activeElement` 가 그 칸이 될 때까지 기다린다(나중에 포커스를 옮겨 입력이 엉뚱한 칸에 들어간다). 일부러 깨 본 결과(11개 변이 — `available` 조건, reset 무시 표식, reset 이벤트, 확인 단계 생략, 작업 중 Esc, 중복 저장 방지, SPA 이동, 사용자 메뉴, 실패 뒤 표식 해제, 헤더 제거, 미리보기 캐시)는 모두 S10/S10b 가 잡는 것을 확인했다 — 새로 고칠 때 같은 식으로 다시 깨 볼 것.
+
+## HTML 오프라인 내보내기 (2026-10-23, 서버·데모 공통 — 클라이언트가 만든다)
+
+- 보드 한 장을 스크립트 없는 `.html` 파일 하나로(README "보드를 HTML 파일로 내보내기"). **서버 API 없음** — 재료는 기존 `GET /boards/:slug/export?format=json`(보는 사람에 맞게 작성자 숨김·username 가공·댓글 포함)과 거기서 참조되는 `/uploads/…` 파일뿐이라 서버 모드와 Pages 데모가 같은 코드로 돈다(데모 워커 변경 없음). 구성: `public/js/lib/export-html.js`(DOM 없는 순수 문자열 빌더 — `buildOfflineHtml`/`buildOfflineParts`/`buildOfflinePartsAsync`, `esc`, `safeHttpUrl`, `renderRichHtml`, `EXPORT_LIMITS`, `CSP`), `export-offline.js`(브라우저 로더: 받기·줄이기·한도·진행·취소), `image-bytes.js`(PNG/JPEG/GIF/WebP 헤더 크기 읽기·메타데이터 자르기), 화면은 `views/share-panel.js` 내보내기 구역·`board-topbar.js` 버튼·`dashboard.js`+`board-actions.js` 카드 메뉴.
+- **불변식(깨면 안 된다)**: ① 파일에 `<script` 가 한 번도 없고 CSP 메타(`default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'`)가 `<meta charset>` 바로 다음(어떤 사용자 값보다 앞)에 있다 — 메타 CSP 는 `<meta http-equiv=refresh>` 를 못 막으니 **escape 가 유일한 방어**다. ② 모든 사용자 값은 `esc`, 링크는 `http(s)` 절대 주소만(2048자 이하), 원격 이미지·링크 미리보기 썸네일은 담지 않는다(열 때 외부 접속 0). ③ 첨부 파일은 항상 `application/octet-stream` 으로 재포장, `data:` 는 허용 mime 의 base64 만. ④ 로더는 `/uploads/<32hex 또는 데모 seed-N>/<한 조각>` 만 받는다(점뿐인 이름·`..`·인코딩 우회 거부) — 내보내기 JSON 이 가리키는 다른 주소로 fetch 하면 교사 브라우저가 공격자 서버·내부 주소로 요청을 보내게 된다. ⑤ **불완전한 파일이 성공처럼 나가면 안 된다**: 한도 초과·디코딩 불가·실패한 파일은 파일 안 "담지 못한 파일" 목록 + 끝난 뒤 요약에 올리고, 글자 한도(`EXPORT_LIMITS.textBytes`)를 넘으면 파일을 아예 안 만든다. ⑥ 기본 모드에서는 JPEG 의 GPS EXIF 가 어떤 경로로도 파일에 남지 않는다(작은 JPEG 는 APP1/XMP/IPTC 등을 잘라 화소·방향만 유지, 큰 것은 canvas 로 다시 인코딩) — "원본 크기" 옵션과 GIF 만 예외(옵션 설명에 적음).
+- **`trimUrl` 은 `markdown.js` 와 `export-html.js` 에 같은 코드로 있다**(S9 가 DOM↔문자열 `innerHTML` 동등성을 20가지 입력으로 본다) — 고칠 때 **둘 다**. 예전 구현은 `)` 로 끝나는 긴 주소에서 O(n²)(글 1개 0.9초·30개 30초, 라이브 보드도 같은 비용)였고 지금은 선형 + 길이 상한이다(`test/export-hardening.test.js` 가 시간을 본다).
+- 그림은 디코딩 전에 헤더로 화소 수를 읽어 약 4천만 화소 초과는 건너뛰고(압축 폭탄: 작은 PNG 가 수 GB 를 쓴다), 디코딩은 동시 1개(받기는 3개), 디코딩 실패 시 원본을 그냥 담는 폴백은 잘라 낸 뒤 1MB 이하일 때만. 로더 풀은 파일별 try/catch — 한 파일 실패가 나머지를 버리지 않고, 끝난 뒤 `onProgress` 는 무시(진행 문구가 빨간 오류를 덮어쓰던 좀비 방지), 화면에는 한국어 문장만(`exportErrorText`).
+- 시험: 단위 `test/export-html.test.js`(escape·스킴·CSP·형식별·한도)·`test/export-hardening.test.js`(헤더 파서·EXIF 제거·풀 실패 주입·`trimUrl` 선형·점 이름·비동기 빌드 취소), e2e S9(실제 다운로드를 받아 `file://` 로 열고 이미지 `naturalWidth`·네트워크 0건·스크립트 흔적 없음·CSP 위반 없음·오프라인 에뮬레이션·7형식·악성 JSON 17종에 공격자 리스너 0건·320/340/360px 막대 넘침), pages P3h(데모에서 같은 흐름·`seed-N` 업로드). 변이 점검은 단위 28종+e2e 3종 모두 잡힘(escape·스킴 필터·CSP 메타·원격 이미지·`trimUrl` 이차식·EXIF·한도·풀·직렬 디코딩). 다운로드는 `e2e/rawcdp.mjs`(`tools/cdp.mjs` 가 띄운 크롬에 두 번째 DevTools 연결을 열어 다운로드 허용·탭별 Network 를 본다), 시험용 그림은 `e2e/image-fixtures.mjs`(GPS 가 든 JPEG·방향 표식·압축 폭탄 PNG).
+- 알려진 한계: 큰 보드는 메모리가 크다(문자열+Blob 약 2배, 합계 150MB 근처에서 4GB 급 PC 는 부담), `data:` 다운로드 링크는 Chrome 에서만 확인했다(Firefox/Safari·구형 브라우저는 미확인), 라이트박스는 JS 가 없어 Esc 로는 못 닫는다, 인쇄 시 댓글(`<details>`)은 `::details-content` 를 지원하는 브라우저에서만 펼쳐진다, 본문의 bidi 제어문자는 그대로(라이브 앱과 동일). **함정**: Write 도구가 내용 속 ` ` 같은 `\uXXXX` 를 실제 문자로 바꿔 쓸 수 있고, 파이썬으로 고칠 때 `newline=''` 없이 쓰면 Windows 에서 LF→CRLF 로 바뀐다(이 저장소 JS 는 LF — `git ls-files --eol`).
 
 ## 열린 결정·알려진 빈칸
 

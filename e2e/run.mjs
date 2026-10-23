@@ -1,14 +1,17 @@
 // End-to-end acceptance run (docs/CONTRACT.md §10): boots a real server on a temp DB, drives isolated headless
 // browsers with tools/cdp.mjs. No dependencies.   usage: npm run e2e   (needs Chrome/Edge; CHROME_PATH to override)
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import http from 'node:http';
+import { mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir, networkInterfaces as osNetworkInterfaces } from 'node:os';
 import net from 'node:net';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { launchBrowser, findChrome } from '../tools/cdp.mjs';
-import { Client, createAppOnGoodPort, makeBoard, makeUser } from '../test/helpers.js';
+import { Client, createAppOnGoodPort, listenOnGoodPort, makeBoard, makeUser } from '../test/helpers.js';
 import { startMockGoogle } from '../test/google-mock.js';
-import { buildDemoBoard, makeSeedDir, stubPreviewFetcher } from './demo-board.mjs';
+import { buildDemoBoard, makePdf, makePng, makeSeedDir, stubPreviewFetcher } from './demo-board.mjs';
+import { connectBrowser, watchDownloads } from './rawcdp.mjs';
+import { GPS_NEEDLE, bombPng, injectExif } from './image-fixtures.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const OUT = join(here, 'out');
@@ -913,6 +916,920 @@ try {
     } finally {
       await appV.close();
       try { rmSync(dirV, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+  /* ── S9 HTML 오프라인 내보내기: 버튼으로 실제로 내려받고, 그 파일을 file:// 로 새 탭에 열어 확인(네트워크 0건·스크립트 0·악성 입력 무해) ── */
+  await step('S9', async () => {
+    const dlDir = mkdtempSync(join(tmpdir(), 'edulet-e2e-dl-'));
+    const raw = await connectBrowser(browser.port);
+    const ctxs = [];
+    try {
+      // ── fixtures through the API: fast users whose NAMES are hostile, a rows board with a huge picture, a PDF, a too-big file, a link, hostile posts
+      const evilName = '"><svg onload=window.__pwned=5>';
+      const owner = makeUser(app, 'exo');
+      app.db.run('UPDATE users SET display_name = ? WHERE id = ?', '출제 교사', owner.id);
+      const talker = makeUser(app, 'ext');
+      app.db.run('UPDATE users SET display_name = ? WHERE id = ?', evilName, talker.id);
+      const TITLE = 'S9 <i>내보내기</i> 시험';
+      const b = await makeBoard(owner, { title: TITLE, description: '설명 **굵게** https://example.com/ok <b>태그</b>', format: 'rows', linkAccess: 'comment' });
+      const slug = b.slug;
+      const sec1 = (await owner.get(`/api/boards/${slug}`)).json.sections[0];
+      await owner.patch(`/api/sections/${sec1.id}`, { title: '첫 구역' });
+      const sec2 = (await owner.post(`/api/boards/${slug}/sections`, { title: '둘째 구역' })).json.section;
+      const up = async (name, mime, bytes) => {
+        const r = await owner.req('PUT', `/api/uploads?board=${slug}&name=${encodeURIComponent(name)}`, bytes, { raw: true, headers: { 'content-type': mime } });
+        if (r.status !== 200 && r.status !== 201) throw new Error('upload ' + name + ' → ' + r.status + ' ' + r.text.slice(0, 120));
+        return r.json;
+      };
+      const mk = async (body) => {
+        const r = await owner.post(`/api/boards/${slug}/posts`, body);
+        if (r.status !== 201) throw new Error('post → ' + r.status + ' ' + r.text.slice(0, 120));
+        return r.json.post;
+      };
+      const pdfBytes = makePdf();
+      const photo = await up('큰사진.png', 'image/png', makePng(3200, 1800, [60, 120, 200]));
+      const pdf = await up('자료.pdf', 'application/pdf', pdfBytes);
+      const big = await up('큰파일.bin', 'application/octet-stream', Buffer.alloc(16 * 1024 * 1024, 7));
+      await mk({ title: '큰 사진', body: '3200x1800 그림', sectionId: sec1.id, attachment: { kind: 'image', uploadId: photo.id } });
+      const pEvil = await mk({
+        title: '<script>window.__pwned=1</script>', color: 'red', sectionId: sec1.id,
+        body: '"><img src=x onerror="window.__pwned=2">\njavascript:window.__pwned=3 [x](javascript:window.__pwned=3)\n- 목록 **굵게** https://example.com/ok.\n</style><script>window.__pwned=6</script>',
+      });
+      await mk({ title: '자료', sectionId: sec2.id, attachment: { kind: 'file', uploadId: pdf.id } });
+      await mk({ title: '너무 큰 파일', sectionId: sec2.id, attachment: { kind: 'file', uploadId: big.id } });
+      await mk({ title: '링크', sectionId: sec2.id, attachment: { kind: 'link', url: 'https://example.com/page?a=1&b=2' } });
+      await mk({ title: '다른 곳의 그림', sectionId: sec2.id, attachment: { kind: 'image', url: 'https://evil.example/remote-pic.png' } });
+      const EVIL_COMMENT = '<img src=x onerror=window.__pwned=4> 댓글';
+      if ((await talker.post(`/api/posts/${pEvil.id}/comments`, { body: EVIL_COMMENT })).status !== 201) throw new Error('comment 1');
+      if ((await owner.post(`/api/posts/${pEvil.id}/comments`, { body: '선생님 댓글' })).status !== 201) throw new Error('comment 2');
+
+      // ── an anonymous visitor (read + comment) on the board
+      const ctx = await browser.newContext();
+      ctxs.push(ctx);
+      const dl = await watchDownloads(raw, ctx.id, dlDir);
+      const page = await ctx.newPage(base + '/b/' + slug);
+      await page.waitFor('[data-post-id]', { timeout: 15000 });
+      await page.eval('window.__EDULET_HIDE_MS = 3600000; 1'); // a tab in the background parks its live stream; this one is used again later
+      // a background tab does not render and its stream is parked: bring the tab we are about to use to the front
+      const front = async (t) => { await raw.send('Target.activateTarget', { targetId: t.targetId }); await sleep(250); };
+      await sleep(500);
+      check('S9 (준비) 카드 6장', (await page.count('[data-post-id]')) === 6, 'n=' + (await page.count('[data-post-id]')));
+
+      // top-bar button → the share dialog on its export section
+      check('S9 상단 막대에 "내보내기" 버튼(이름 있음)', (await page.eval(`document.querySelector('[data-role="topbar-export"]')?.getAttribute('aria-label')`)) === '내보내기');
+      await page.click('[data-role="topbar-export"]');
+      await page.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(700); // the dialog scrolls to its export section smoothly
+      const chip = await page.eval(`document.querySelector('[data-role="share"] .bp-share-chip.on')?.dataset.tab`);
+      check('S9 상단 "내보내기" 가 공유 창의 내보내기 구역을 바로 엶', chip === 'export', String(chip));
+      const box = await page.eval(`(() => { const b = document.querySelector('[data-role="export-html-box"]'); return { text: b.innerText, size: b.querySelector('select[name=imageSize]').value, files: b.querySelector('input[name=includeFiles]').checked, statusRole: b.querySelector('[data-role="export-html-status"]').getAttribute('role'), live: b.querySelector('[data-role="export-html-status"]').getAttribute('aria-live'), btn: document.querySelector('[data-role="export-html"]').innerText.trim() }; })()`);
+      check('S9 공유 창: "HTML 파일 (오프라인)" 버튼·옵션(기본: 줄여서·첨부 포함)·안내·상태 영역(role=status, aria-live)', box.btn === 'HTML 파일 (오프라인)' && box.size === 'shrink' && box.files && box.statusRole === 'status' && box.live === 'polite' && /다른 사람에게 보낼 때 주의/.test(box.text) && /더블클릭/.test(box.text), JSON.stringify(box).slice(0, 300));
+      check('S9 공유 창 안내: 위치 정보가 빠진다·움직이는 그림은 정지된 그림·관리자가 내보내면 승인 대기 글도 담긴다·보낼 때 주의', /위치 정보 등이 빠진 채로 담겨요/.test(box.text) && /움직이는 그림은 정지된 그림으로 담겨요/.test(box.text) && /승인 대기 중인 글도 담겨요/.test(box.text) && /다른 사람에게 보낼 때 주의/.test(box.text), box.text.slice(0, 400));
+      await page.screenshot(join(OUT, 's9-share-export.png'));
+
+      // click → a real file
+      await page.eval(`window.__st = []; window.__busy = [];
+        const st = document.querySelector('[data-role="export-html-status"]'), bt = document.querySelector('[data-role="export-html"]');
+        new MutationObserver(() => window.__st.push(st.textContent)).observe(st, { childList: true, characterData: true, subtree: true });
+        new MutationObserver(() => window.__busy.push(bt.getAttribute('aria-busy') + '/' + bt.disabled)).observe(bt, { attributes: true }); 1`);
+      const f1 = await dl.next(() => page.click('[data-role="export-html"]'), { timeout: 60000 });
+      const html1 = readFileSync(f1.path, 'utf8');
+      check('S9 내려받은 파일 이름 edulet-<slug>-YYYYMMDD.html', new RegExp(`^edulet-${slug}-\\d{8}\\.html$`).test(f1.suggested), f1.suggested);
+      check('S9 파일: CSP 메타가 있고 <script 가 한 번도 없음', html1.includes(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">`) && !/<script/i.test(html1) && html1.length > 2000, 'bytes=' + f1.bytes);
+      check('S9 파일: 용량 때문에 못 담은 파일이 카드 자리에 이유와 함께 적힘', html1.includes('용량이 커서 담지 못했어요: 큰파일.bin') && html1.includes('<summary>담지 못한 파일 1개</summary>'));
+      check('S9 파일: 3200px 그림은 줄여 담겨 파일이 작음(원본 3200px PNG 가 그대로 들어가지 않음)', f1.bytes < 2 * 1024 * 1024, 'bytes=' + f1.bytes);
+      await page.waitFor(`/내려받았어요/.test(document.querySelector('[data-role="export-html-status"]').textContent)`, { timeout: 5000 });
+      const prog = await page.eval('({ st: window.__st, busy: window.__busy, text: document.querySelector(\'[data-role="export-html-status"]\').textContent, btnDisabled: document.querySelector(\'[data-role="export-html"]\').disabled, bar: document.querySelector(\'.bp-export-bar\').hidden })');
+      check('S9 진행 안내: "보드 내용을 읽는 중…" → "그림|파일 n/m 담는 중…" → "파일을 만드는 중…" → 완료 문장이 aria-live 영역에 차례로 나옴', prog.st[0] === '보드 내용을 읽는 중…' && prog.st.some((t) => /^(그림|파일) \d\/\d 담는 중…$/.test(t)) && prog.st.some((t) => t === '파일을 만드는 중…') && /내려받았어요/.test(prog.st[prog.st.length - 1]), JSON.stringify(prog.st));
+      check('S9 만드는 동안 버튼이 비활성(aria-busy), 끝나면 다시 활성·진행 막대 숨김', prog.busy.includes('true/true') && prog.busy[prog.busy.length - 1] === 'false/false' && !prog.btnDisabled && prog.bar, JSON.stringify(prog.busy));
+      check('S9 끝난 뒤 요약: 몇 개 담았고 못 담은 파일이 있다는 말', /글 6개/.test(prog.text) && /그림 1개/.test(prog.text) && /담지 못한 파일이 1개/.test(prog.text), prog.text);
+
+      // ── open the saved file from file:// in a fresh tab, watching the network, the console and the log
+      const view = await ctx.newPage('about:blank');
+      const tab = await raw.attach(view.targetId);
+      const requests = [];
+      const logs = [];
+      tab.on('Network.requestWillBeSent', (p) => requests.push(p.request.url));
+      tab.on('Log.entryAdded', (p) => logs.push(p.entry));
+      await tab.send('Network.enable');
+      await tab.send('Log.enable');
+      const fileUrl = pathToFileURL(f1.path).href;
+      await view.goto(fileUrl);
+      await view.waitFor(`document.querySelectorAll('article.card').length === 6`, { timeout: 15000 });
+      await view.eval(`(async () => { for (const i of document.images) { i.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 40)); } window.scrollTo(0, 0); return 1; })()`);
+      await view.waitFor(`[...document.images].every((i) => i.complete)`, { timeout: 10000 });
+      const probe = () => view.eval(`(() => {
+        const text = document.body.textContent;
+        return {
+          title: document.title, h1: document.querySelector('h1').textContent, scripts: document.scripts.length, pwned: typeof window.__pwned,
+          handlers: document.querySelectorAll('[onerror],[onload],[onclick],[onmouseover],[onfocus]').length, cards: document.querySelectorAll('article.card').length,
+          imgs: [...document.images].map((i) => ({ w: i.naturalWidth, h: i.naturalHeight })),
+          badHref: [...document.querySelectorAll('[href]')].map((a) => a.getAttribute('href')).filter((h) => !/^(#|https?:\\/\\/|data:application\\/octet-stream;base64,)/.test(h)),
+          badSrc: [...document.querySelectorAll('[src]')].map((a) => a.getAttribute('src')).filter((h) => !h.startsWith('data:')),
+          jsLinks: document.querySelectorAll('a[href^="javascript" i]').length,
+          evilTitle: text.includes('<script>window.__pwned=1</script>'), evilComment: text.includes(${JSON.stringify(EVIL_COMMENT)}), evilName: text.includes(${JSON.stringify(evilName)}),
+          injectedImgs: document.querySelectorAll('img[src="x"]').length, injectedSvg: document.querySelectorAll('svg').length,
+          commentDetails: document.querySelectorAll('details.comments').length, owner: text.includes('출제 교사'),
+          okLink: !!document.querySelector('a[href="https://example.com/ok"]'), linkCard: document.querySelector('a.link')?.getAttribute('href'),
+          fileLink: document.querySelector('a.file[download]')?.getAttribute('download'),
+          overflow: document.documentElement.scrollWidth - innerWidth,
+        };
+      })()`);
+      let p = await probe();
+      check('S9 열어 본 파일: 제목·보드 제목이 글자 그대로(<i> 태그가 아님)', p.h1 === TITLE && p.title.startsWith(TITLE) && p.cards === 6, JSON.stringify([p.h1, p.title, p.cards]));
+      check('S9 열어 본 파일: 악성 글 제목·댓글·댓글 작성자 이름이 "글자"로만 보임', p.evilTitle && p.evilComment && p.evilName && p.commentDetails === 1, JSON.stringify([p.evilTitle, p.evilComment, p.evilName, p.commentDetails]));
+      check('S9 열어 본 파일: 스크립트 0개·실행 흔적(window.__pwned) 없음·이벤트 속성 0·끼어든 <img src=x>/<svg> 없음', p.scripts === 0 && p.pwned === 'undefined' && p.handlers === 0 && p.injectedImgs === 0 && p.injectedSvg === 0, JSON.stringify([p.scripts, p.pwned, p.handlers, p.injectedImgs, p.injectedSvg]));
+      check('S9 열어 본 파일: 링크는 http(s)·#·data(파일)뿐, javascript: 링크 없음, 본문 URL 은 링크가 됨', p.badHref.length === 0 && p.jsLinks === 0 && p.okLink && p.linkCard === 'https://example.com/page?a=1&b=2', JSON.stringify([p.badHref, p.jsLinks, p.okLink, p.linkCard]));
+      check('S9 열어 본 파일: src 는 전부 data:', p.badSrc.length === 0 && p.imgs.length >= 1, JSON.stringify(p.badSrc));
+      check('S9 열어 본 파일: 그림이 실제로 보이고(naturalWidth>0) 3200px 원본이 1600px 로 줄어 있음', p.imgs.every((i) => i.w > 0) && p.imgs.some((i) => i.w === 1600 && i.h === 900), JSON.stringify(p.imgs));
+      check('S9 열어 본 파일: 소유자 이름이 보임', p.owner);
+      const nonData = requests.filter((u) => !u.startsWith('data:'));
+      check('S9 열어 본 파일: 네트워크 요청 0건(http 요청 없음, data: 제외) — 다른 곳에 있는 그림도 가져오지 않음', nonData.every((u) => u.startsWith('file:')) && !requests.some((u) => /^https?:|evil\.example/.test(u)), nonData.join(' | ').slice(0, 300));
+      check('S9 열어 본 파일: 다른 곳의 그림은 "담지 않았어요" 글자와 주소 링크만', (await view.eval(`document.body.textContent.includes('외부 그림은 담지 않았어요') && !!document.querySelector('a[href="https://evil.example/remote-pic.png"]') && ![...document.images].some((i) => i.src.includes('evil.example'))`)) === true);
+      const bad = logs.filter((e) => e.level === 'error' || e.level === 'warning' || e.source === 'security' || /Content Security Policy|Refused to/i.test(e.text || ''));
+      check('S9 열어 본 파일: 콘솔·보안 로그에 CSP 위반/오류가 하나도 없음(악성 입력이 막히려다 걸린 것도 없음)', view.errors.length === 0 && bad.length === 0, JSON.stringify([view.errors, bad.map((e) => e.text)]).slice(0, 300));
+      await view.screenshot(join(OUT, 's9-file-rows.png'), { fullPage: true });
+
+      // lightbox without script: :target
+      await view.click('.ph-open');
+      await sleep(200);
+      const lb = await view.eval(`(() => { const f = document.querySelector('.ph:target'); if (!f) return null; const r = f.querySelector('img').getBoundingClientRect(); return { pos: getComputedStyle(f).position, x: r.x, y: r.y, w: r.width, h: r.height, vw: innerWidth, vh: innerHeight }; })()`);
+      check('S9 사진을 누르면 화면 가득 크게(position:fixed, 화면 안, JS 없이 :target)', !!lb && lb.pos === 'fixed' && lb.w > 400 && lb.x >= -1 && lb.y >= -1 && lb.x + lb.w <= lb.vw + 1 && lb.y + lb.h <= lb.vh + 1, JSON.stringify(lb));
+      await view.screenshot(join(OUT, 's9-lightbox.png'));
+      await view.mouse(8, 8); // the dark backdrop is the close link
+      await sleep(200);
+      check('S9 바깥(배경)을 누르면 닫힘', (await view.exists('.ph:target')) === false);
+
+      // a file attachment is a real download of the original bytes
+      const f2 = await dl.next(() => view.click('a.file'), { timeout: 20000 });
+      check('S9 첨부 PDF: 파일 안의 링크로 원본 바이트 그대로 내려받아짐(이름 자료.pdf)', f2.suggested === '자료.pdf' && readFileSync(f2.path).equals(pdfBytes), `${f2.suggested} ${f2.bytes}/${pdfBytes.length}`);
+
+      // offline for real
+      await tab.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+      await view.reload();
+      await view.waitFor(`document.querySelectorAll('article.card').length === 6`, { timeout: 15000 });
+      await view.eval(`(async () => { for (const i of document.images) { i.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 40)); } return 1; })()`);
+      await view.waitFor(`[...document.images].every((i) => i.complete)`, { timeout: 10000 });
+      p = await probe();
+      check('S9 인터넷을 끊은 채 다시 열어도 글·그림이 그대로(offline 에뮬레이션)', p.cards === 6 && p.imgs.every((i) => i.w > 0) && p.pwned === 'undefined', JSON.stringify([p.cards, p.imgs]));
+      await tab.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+
+      // phones and dark mode
+      for (const w of [390, 320]) {
+        await view.setViewport(w, 800, true);
+        await sleep(250);
+        p = await probe();
+        check(`S9 열어 본 파일 ${w}px: 가로로 넘치지 않음`, p.overflow <= 1, 'overflow=' + p.overflow);
+        if (w === 390) await view.screenshot(join(OUT, 's9-file-mobile.png'));
+      }
+      await view.setViewport(1280, 860);
+      await tab.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+      await sleep(250);
+      const darkBg = await view.eval(`getComputedStyle([...document.querySelectorAll('article.card')].find((c) => !/pc-/.test(c.className))).backgroundColor`);
+      check('S9 어두운 화면 설정이면 카드가 어두운 색', darkBg === 'rgb(31, 37, 48)', darkBg);
+      await view.screenshot(join(OUT, 's9-file-dark.png'));
+      await tab.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+
+      // the app's own top bar and share dialog stay inside the screen with the new button (phones)
+      await front(page);
+      await page.key('Escape');
+      await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+      for (const w of [390, 320]) {
+        await page.setViewport(w, 800, true);
+        await sleep(300);
+        const bar = await page.eval(`(() => { const bt = document.querySelector('[data-role="topbar-export"]').getBoundingClientRect(); const wide = [...document.querySelectorAll('.bp-topbar .bp-btn, .bp-topbar .app-uc')].filter((e) => { const r = e.getBoundingClientRect(); return r.right > innerWidth + 1 || r.left < -1; }).length; return { right: bt.right, w: bt.width, page: document.documentElement.scrollWidth - innerWidth, wide }; })()`);
+        if (w === 320) {
+          check('S9 상단 막대 320px: 아주 좁아서 내보내기 버튼은 비켜 있고(공유 창에 있음) 넘치지 않음', bar.w === 0 && bar.page <= 1 && bar.wide === 0, JSON.stringify(bar));
+          await page.screenshot(join(OUT, 's9-topbar-320.png'));
+          await page.click('[aria-label="공유"]'); // the export section is one chip away in the share dialog
+          await page.waitFor('[data-role="share"] .bp-share-chip[data-tab="export"]');
+          await page.click('.bp-share-chip[data-tab="export"]');
+        } else {
+          check(`S9 상단 막대 ${w}px: 내보내기 버튼이 아이콘만(36px) 화면 안에 있고 넘치지 않음`, bar.right <= w && bar.w <= 40 && bar.page <= 1 && bar.wide === 0, JSON.stringify(bar));
+          await page.click('[data-role="topbar-export"]');
+        }
+        await page.waitFor('[data-role="share"] [data-role="export-html"]');
+        await sleep(600);
+        const ov = await page.eval(`(() => { const m = document.querySelector('[data-role="share"]'); const body = m.querySelector('.modal-body'); const r = m.getBoundingClientRect(); return { page: document.documentElement.scrollWidth - innerWidth, body: body.scrollWidth - body.clientWidth, outside: [...m.querySelectorAll('.bp-export-html, .bp-export-html button, .bp-export-html select, .bp-export-html progress')].filter((e) => e.offsetParent !== null).filter((e) => { const q = e.getBoundingClientRect(); return q.left < r.left - 1 || q.right > r.right + 1; }).length }; })()`);
+        check(`S9 공유 창 ${w}px: 내보내기 상자가 넘치지 않음`, ov.page <= 1 && ov.body <= 1 && ov.outside === 0, JSON.stringify(ov));
+        if (w === 320) await page.screenshot(join(OUT, 's9-share-320.png'));
+        await page.key('Escape');
+        await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+      }
+      await page.setViewport(1280, 860);
+
+      // every board format comes out in its own layout (real download each time, opened from file://)
+      const LAYOUT = { wall: 'layout-wall', grid: 'layout-grid', stream: 'layout-stream', shelf: 'layout-shelf', rows: 'layout-rows', canvas: 'layout-grid', backchannel: 'layout-chat' };
+      for (const f of ['wall', 'grid', 'stream', 'shelf', 'canvas', 'backchannel', 'rows']) {
+        const pr = await owner.patch(`/api/boards/${slug}`, { format: f });
+        if (pr.status !== 200) throw new Error('format ' + f + ' ' + pr.status);
+        await front(page);
+        await page.waitFor(`document.querySelector('[data-role="board-surface"]')?.dataset.format === '${f}'`, { timeout: 8000 });
+        await sleep(500);
+        await page.click('[data-role="topbar-export"]');
+        await page.waitFor('[data-role="share"] [data-role="export-html"]');
+        await sleep(500);
+        const ff = await dl.next(() => page.click('[data-role="export-html"]'), { timeout: 60000 });
+        const text = readFileSync(ff.path, 'utf8');
+        await page.key('Escape');
+        await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+        check(`S9 형식 ${f}: 파일이 ${LAYOUT[f]} 배치(data-format=${f})이고 카드 6장·스크립트 0`, text.includes(`class="${LAYOUT[f]}" data-format="${f}"`) && ((text.match(/<article class="(card|msg)/g) || []).length === 6) && !/<script/i.test(text), `${ff.name}`);
+        if (f === 'canvas') check('S9 형식 canvas: 격자로 바꿨다는 한 줄 안내', text.includes('캔버스 보드라서'));
+        if (f === 'shelf' || f === 'rows') check(`S9 형식 ${f}: 구역 제목 2개와 글 수`, text.includes('<h2 class="sec-title">첫 구역</h2><span class="sec-n">2</span>') && text.includes('<h2 class="sec-title">둘째 구역</h2><span class="sec-n">4</span>'));
+        await front(view);
+        await view.goto(pathToFileURL(ff.path).href);
+        await view.waitFor(`document.querySelectorAll('article').length >= 5`, { timeout: 15000 });
+        await view.eval(`(async () => { for (const i of document.images) { i.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 30)); } window.scrollTo(0, 0); return 1; })()`);
+        await sleep(300);
+        for (const w of [1280, 390]) {
+          await view.setViewport(w, 860, w < 600);
+          await sleep(200);
+          const ov = await view.eval(`document.documentElement.scrollWidth - innerWidth`);
+          if (w === 390) check(`S9 형식 ${f} 열어 본 파일 390px: 가로로 넘치지 않음`, ov <= 1, 'overflow=' + ov);
+          await view.screenshot(join(OUT, `s9-fmt-${f}-${w}.png`), { fullPage: false });
+        }
+        await view.setViewport(1280, 860);
+      }
+
+      // options: original size + no attachments
+      await front(page);
+      await page.click('[data-role="topbar-export"]');
+      await page.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(500);
+      await page.eval(`(() => { const s = document.querySelector('select[name=imageSize]'); s.value = 'original'; s.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('input[name=includeFiles]').click(); return 1; })()`);
+      check('S9 "원본 크기"를 고르면 안내가 "위치 정보 등이 그대로 들어가요" 로 바뀜', /위치 정보 등이 그대로 들어가요/.test(await page.text('#bp-export-size-note')), await page.text('#bp-export-size-note'));
+      const f3 = await dl.next(() => page.click('[data-role="export-html"]'), { timeout: 60000 });
+      const html3 = readFileSync(f3.path, 'utf8');
+      check('S9 옵션 "첨부 파일 담기" 끄면 PDF 는 담지 않았다고 표시, 그림은 계속 담김', html3.includes('설정에 따라 담지 않았어요: 자료.pdf') && !html3.includes('download="자료.pdf"') && html3.includes('<img '));
+      await front(view);
+      await view.goto(pathToFileURL(f3.path).href);
+      await view.waitFor(`document.querySelectorAll('article.card').length === 6`, { timeout: 15000 });
+      await view.eval(`(async () => { for (const i of document.images) { i.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 40)); } return 1; })()`);
+      await view.waitFor(`[...document.images].every((i) => i.complete)`, { timeout: 10000 });
+      p = await probe();
+      check('S9 옵션 "원본 크기" 면 3200px 그림이 그대로', p.imgs.some((i) => i.w === 3200), JSON.stringify(p.imgs));
+      await front(page);
+      await page.key('Escape');
+      await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+
+      // one file that cannot be fetched must not sink the export: its request dies, everything else goes on (this used to end in a red error)
+      await front(page);
+      await page.eval(`(() => { const f = window.fetch.bind(window); window.fetch = async (u, o) => { if (String(u).includes('/uploads/') && decodeURIComponent(String(u)).includes('자료')) throw new TypeError('Failed to fetch'); return f(u, o); }; return 1; })()`);
+      await page.click('[data-role="topbar-export"]');
+      await page.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(500);
+      const f5 = await dl.next(() => page.click('[data-role="export-html"]'), { timeout: 60000 });
+      const html5 = readFileSync(f5.path, 'utf8');
+      const st5 = await page.eval(`(() => { const s = document.querySelector('[data-role="export-html-status"]'); return { text: s.textContent, err: s.classList.contains('is-error') }; })()`);
+      check('S9 파일 하나를 받지 못해도 나머지는 계속되어 파일이 만들어지고(그 파일만 "불러오지 못해" 로 표시) 빨간 오류가 없음', html5.includes('불러오지 못해 담지 못했어요: 자료.pdf') && html5.includes('<img ') && !st5.err && /내려받았어요/.test(st5.text) && /불러오지 못해/.test(st5.text), JSON.stringify(st5).slice(0, 300));
+      await page.key('Escape');
+      await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+      await page.reload();
+      await page.waitFor('[data-post-id]', { timeout: 15000 });
+      await page.eval('window.__EDULET_HIDE_MS = 3600000; 1');
+
+      // ── pictures: the location never stays in (default mode), a rotated photo stays upright, a bomb is skipped without being decoded;
+      //    "원본 크기" keeps the original (and says so)
+      const mkJpeg = (w, h, noise) => page.eval(`(async () => {
+        const c = document.createElement('canvas'); c.width = ${w}; c.height = ${h};
+        const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, ${w}, ${h}); g.addColorStop(0, '#f80'); g.addColorStop(1, '#08f'); x.fillStyle = g; x.fillRect(0, 0, ${w}, ${h});
+        x.fillStyle = '#000'; x.font = '60px sans-serif'; x.fillText('TOP-LEFT', 40, 100);
+        ${noise ? `const d = x.getImageData(0, 0, ${w}, ${h}); for (let i = 0; i < d.data.length; i += 4) { d.data[i] = Math.random() * 255; d.data[i + 1] = Math.random() * 255; d.data[i + 2] = Math.random() * 255; } x.putImageData(d, 0, 0);` : ''}
+        const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.9)); const a = new Uint8Array(await b.arrayBuffer());
+        let s = ''; for (let i = 0; i < a.length; i += 8192) s += String.fromCharCode.apply(null, a.subarray(i, i + 8192)); return btoa(s);
+      })()`).then((b64) => Buffer.from(b64, 'base64'));
+      const gb = await makeBoard(owner, { title: 'S9 그림', format: 'wall', linkAccess: 'comment' });
+      const upG = async (name, mime, bytes) => {
+        const r = await owner.req('PUT', `/api/uploads?board=${gb.slug}&name=${encodeURIComponent(name)}`, bytes, { raw: true, headers: { 'content-type': mime } });
+        if (r.status !== 200 && r.status !== 201) throw new Error('upload ' + name + ' → ' + r.status + ' ' + r.text.slice(0, 120));
+        return r.json;
+      };
+      const mkG = async (title, up) => {
+        const r = await owner.post(`/api/boards/${gb.slug}/posts`, { title, attachment: { kind: 'image', uploadId: up.id } });
+        if (r.status !== 201) throw new Error('post ' + title + ' → ' + r.status + ' ' + r.text.slice(0, 120));
+      };
+      const small = await mkJpeg(900, 600, false);
+      const noisy = await mkJpeg(2400, 1600, true);
+      await mkG('upright', await upG('upright.jpg', 'image/jpeg', injectExif(small, {})));
+      await mkG('rotated', await upG('rotated.jpg', 'image/jpeg', injectExif(small, { orientation: 6 })));
+      await mkG('big', await upG('big.jpg', 'image/jpeg', injectExif(noisy, { orientation: 6 })));
+      await mkG('bomb', await upG('bomb.png', 'image/png', await bombPng(31000, 31000)));
+      const gpage = await ctx.newPage(base + '/b/' + gb.slug);
+      await gpage.waitFor('[data-post-id]', { timeout: 15000 });
+      await gpage.eval('window.__EDULET_HIDE_MS = 3600000; 1');
+      await sleep(500);
+      const gpsIn = (file) => [...readFileSync(file, 'utf8').matchAll(/data:image\/[a-z]+;base64,([A-Za-z0-9+/=]+)/g)].some((m) => Buffer.from(m[1], 'base64').includes(GPS_NEEDLE));
+      await front(gpage);
+      await gpage.click('[data-role="topbar-export"]');
+      await gpage.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(500);
+      const t0g = Date.now();
+      const fg = await dl.next(() => gpage.click('[data-role="export-html"]'), { timeout: 60000 });
+      const tookG = Date.now() - t0g;
+      const htmlG = readFileSync(fg.path, 'utf8');
+      check('S9 그림: 기본(줄여서) 모드의 파일에는 어떤 그림에도 위치 정보(GPS)가 남지 않음(작은 JPEG 도, 큰 JPEG 도)', !gpsIn(fg.path) && !htmlG.includes('GPSLatitude'), 'bytes=' + fg.bytes);
+      check('S9 그림: 폭탄 PNG(31000×31000, 파일은 수백 KB)는 디코딩하지 않고 건너뛰어 "담지 못한 파일" 에 오르고, 내보내기는 곧바로 끝남', htmlG.includes('용량이 커서 담지 못했어요: bomb.png') && htmlG.includes('<summary>담지 못한 파일 1개</summary>') && tookG < 30000, `took ${tookG} ms`);
+      await front(view);
+      await view.goto(pathToFileURL(fg.path).href);
+      await view.waitFor(`document.querySelectorAll('article.card').length === 4`, { timeout: 15000 });
+      await view.eval(`(async () => { for (const i of document.images) { i.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 40)); } return 1; })()`);
+      await view.waitFor(`[...document.images].every((i) => i.complete)`, { timeout: 10000 });
+      const gi = await view.eval(`Object.fromEntries([...document.images].map((i) => [i.alt, [i.naturalWidth, i.naturalHeight]]))`);
+      check('S9 그림: 같은 자리의 사진이 방향까지 그대로(900×600 은 그대로, 회전 표시된 사진은 600×900 로 세워짐)', JSON.stringify(gi['upright.jpg']) === '[900,600]' && JSON.stringify(gi['rotated.jpg']) === '[600,900]', JSON.stringify(gi));
+      check('S9 그림: 큰 회전 사진은 긴 변 1600px 로 줄고 세로로 세워져 있음', gi['big.jpg'] && gi['big.jpg'][1] === 1600 && gi['big.jpg'][0] > 1000 && gi['big.jpg'][0] < 1100, JSON.stringify(gi['big.jpg']));
+      await front(gpage);
+      await gpage.eval(`(() => { const s = document.querySelector('select[name=imageSize]'); s.value = 'original'; s.dispatchEvent(new Event('change', { bubbles: true })); return 1; })()`);
+      const fg2 = await dl.next(() => gpage.click('[data-role="export-html"]'), { timeout: 60000 });
+      check('S9 그림: "원본 크기" 에서는 원본 그대로라 위치 정보가 들어 있음(안내문대로), 폭탄은 여기서도 건너뜀', gpsIn(fg2.path) && readFileSync(fg2.path, 'utf8').includes('용량이 커서 담지 못했어요: bomb.png'));
+      check('S9 그림 화면 콘솔 오류 없음', gpage.errors.length === 0, gpage.errors.join(' | ').slice(0, 300));
+      await gpage.close();
+
+      // ── too much text for one page: the export stops with a Korean message BEFORE a single picture is fetched, and no file is made
+      await front(page);
+      const tl = await page.eval(`(async () => {
+        const m = await import('/js/lib/export-offline.js');
+        const seen = []; const f = window.fetch.bind(window); window.fetch = (u, o) => { seen.push(String(u)); return f(u, o); };
+        try { await m.buildBoardHtml(${JSON.stringify(slug)}, { limits: { textBytes: 3000 } }); return { ok: true }; }
+        catch (e) { return { ok: false, name: e.name, msg: e.message, text: m.exportErrorText(e), uploads: seen.filter((u) => u.includes('/uploads/')).length, exportReq: seen.filter((u) => u.includes('/export?format=json')).length }; }
+        finally { window.fetch = f; }
+      })()`);
+      check('S9 글자 분량이 한도를 넘으면 그림을 받기 전에(요청 0건) 한국어 안내와 함께 멈추고 파일은 만들지 않음', !tl.ok && tl.name === 'ExportTooLargeError' && /너무 많아/.test(tl.text) && tl.uploads === 0 && tl.exportReq === 1, JSON.stringify(tl).slice(0, 300));
+
+      // ── the loader only ever asks THIS app for /uploads/<id>/<name>: a hostile export JSON cannot make it call anywhere else
+      const hits = [];
+      const srv = http.createServer((req, res) => {
+        hits.push(req.method + ' ' + req.url);
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end();
+      });
+      await listenOnGoodPort(srv);
+      try {
+        await front(page);
+        const A = `127.0.0.1:${srv.address().port}`;
+        const HX = 'c'.repeat(32);
+        const hostile = [
+          { kind: 'image', url: `http://${A}/a1.png` }, { kind: 'image', url: `//${A}/a2.png` }, { kind: 'image', url: '/\\' + A + '/a3.png' }, { kind: 'file', url: `\\\\${A}\\a4.bin` },
+          { kind: 'image', url: `/uploads/${HX}/..` }, { kind: 'image', url: `/uploads/${HX}/.` }, { kind: 'image', url: `/uploads/${HX}/%2e%2e` }, { kind: 'image', url: `/uploads/${HX}/../../api/auth/me` },
+          { kind: 'image', url: `/uploads/${HX}/..%2f..%2fapi%2fauth%2fme` }, { kind: 'image', url: `/uploads/${HX}/x?y=http://${A}/q` }, { kind: 'image', url: `/uploads/${HX}/x#h` },
+          { kind: 'file', url: 'file:///C:/Windows/win.ini' }, { kind: 'image', url: 'javascript:window.__pwned=1' }, { kind: 'image', url: `http://127.0.0.1:${app.port}/api/auth/me` },
+          { kind: 'link', url: 'https://example.invalid/', preview: { title: 't', image: `http://${A}/p1.png` } }, { kind: 'link', url: 'https://example.invalid/', preview: { title: 't', image: `//${A}/p2.png` } },
+          { kind: 'video', url: `http://${A}/v.mp4`, preview: { title: 'v', image: `http://${A}/v.png`, embedUrl: `http://${A}/embed` } },
+        ];
+        await page.eval(`(() => {
+          window.__seen = []; window.__orig = window.__orig || window.fetch.bind(window);
+          const evil = ${JSON.stringify(hostile)}; const A = ${JSON.stringify(A)};
+          window.fetch = async (u, o) => {
+            const url = String(u); window.__seen.push(url);
+            if (url.includes('/export?format=json')) {
+              const r = await window.__orig(u, o); const d = await r.json();
+              d.board.wallpaper = '//' + A + '/w.png';
+              evil.forEach((a, i) => d.posts.push({ id: 9000 + i, boardId: d.board.id, sectionId: null, author: { id: 1, displayName: 'x', avatarColor: '#fff' }, title: 'h' + i, body: '', color: null, pinned: false, status: 'published', rank: i, createdAt: Date.now(), updatedAt: Date.now(), attachment: a, commentCount: 0, reactions: {}, comments: [] }));
+              return new Response(JSON.stringify(d), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            }
+            return window.__orig(u, o);
+          };
+          return 1;
+        })()`);
+        const net = await page.eval(`(async () => {
+          const m = await import('/js/lib/export-offline.js');
+          const r = await m.buildBoardHtml(${JSON.stringify(slug)}, {});
+          const html = await r.blob.text();
+          return { seen: window.__seen, skipped: r.summary.skipped.length, ext: (html.match(/외부 그림은 담지 않았어요/g) || []).length };
+        })()`);
+        await sleep(800);
+        const odd = net.seen.filter((u) => !(u.includes('/export?format=json') || /^\/uploads\/[0-9a-f]{32}\/[^/]+$/.test(u)));
+        const dots = net.seen.filter((u) => /^\/uploads\/[0-9a-f]{32}\/(\.|%2e)+$/i.test(u));
+        check('S9 악성 내보내기 JSON(원격·//·역슬래시·../·%2e·file:·javascript:·다른 포트 주소 17종)에도 로더의 요청은 이 앱의 /uploads/<id>/<이름> 뿐 — 공격자 서버에 요청 0건, 점(..)만 있는 이름도 요청하지 않음', hits.length === 0 && odd.length === 0 && dots.length === 0, JSON.stringify({ hits, odd, dots, seenN: net.seen.length }).slice(0, 400));
+        check('S9 악성 JSON: 모르는 /uploads/… 모양은 "외부 그림" 이 아니라 담지 못한 파일로 올라가고, 진짜 원격 그림만 "외부 그림" 으로 말함', net.skipped >= 8 && net.ext >= 1, JSON.stringify(net).slice(0, 300));
+      } finally {
+        srv.closeAllConnections?.();
+        await new Promise((r) => srv.close(r));
+      }
+      await page.reload();
+      await page.waitFor('[data-post-id]', { timeout: 15000 });
+      await page.eval('window.__EDULET_HIDE_MS = 3600000; 1');
+
+      // ── a board admin's bar is the narrowest (it has the settings button too): below 341px the export button steps aside, the dialog still has it
+      const actx = await browser.newContext();
+      ctxs.push(actx);
+      const apage = await actx.newPage();
+      const atab = await raw.attach(apage.targetId);
+      await atab.send('Network.setCookie', { name: 'edulet_sid', value: owner.cookie.split('=')[1], url: base, httpOnly: true });
+      for (const w of [320, 340, 360]) {
+        await apage.setViewport(w, 700, true);
+        await apage.goto(base + '/b/' + slug);
+        await apage.waitFor('[data-post-id]', { timeout: 15000 });
+        await sleep(400);
+        const m = await apage.eval(`(() => { const bar = document.querySelector('.bp-topbar-in'); const ex = document.querySelector('[data-role="topbar-export"]'); return { admin: !!document.querySelector('[aria-label="설정"]'), over: bar.scrollWidth - bar.clientWidth, doc: document.documentElement.scrollWidth - innerWidth, shown: getComputedStyle(ex).display !== 'none' }; })()`);
+        check(`S9 보드 관리자 상단 막대 ${w}px: 설정 버튼이 있어도 가로로 넘치지 않음(내보내기 버튼은 ${w > 340 ? '보임' : '비켜 있음'})`, m.admin && m.over <= 1 && m.doc <= 1 && m.shown === (w > 340), JSON.stringify(m));
+      }
+      await apage.setViewport(320, 700, true);
+      await apage.goto(base + '/b/' + slug);
+      await apage.waitFor('[data-post-id]', { timeout: 15000 });
+      await apage.click('[aria-label="공유"]');
+      await apage.waitFor('[data-role="share"] .bp-share-chip[data-tab="export"]');
+      await apage.click('.bp-share-chip[data-tab="export"]');
+      await apage.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(500);
+      check('S9 관리자 320px: 공유 창의 내보내기 구역에서 "HTML 파일 (오프라인)" 단추를 쓸 수 있음', (await apage.eval(`(() => { const r = document.querySelector('[data-role="export-html"]').getBoundingClientRect(); return r.width > 40 && r.right <= innerWidth && r.left >= 0; })()`)) === true);
+      await apage.screenshot(join(OUT, 's9-admin-320.png'));
+
+      // cancel (the uploads are slowed down so there is something to cancel)
+      await page.eval(`(() => { const f = window.fetch.bind(window); window.fetch = async (u, o) => { if (String(u).includes('/uploads/')) await new Promise((r) => setTimeout(r, 2500)); return f(u, o); }; return 1; })()`);
+      await page.click('[data-role="topbar-export"]');
+      await page.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(500);
+      const before = dl.begun.length;
+      await page.click('[data-role="export-html"]');
+      await page.waitFor(`/담는 중/.test(document.querySelector('[data-role="export-html-status"]').textContent)`, { timeout: 8000 });
+      check('S9 진행 중에는 "취소" 버튼이 보이고 진행 막대가 보임', (await page.eval(`!document.querySelector('[data-role="export-html-cancel"]').hidden && !document.querySelector('.bp-export-bar').hidden`)) === true);
+      await page.click('[data-role="export-html-cancel"]');
+      await page.waitFor(`document.querySelector('[data-role="export-html-status"]').textContent === '취소했어요.'`, { timeout: 5000 });
+      await sleep(3200);
+      const after = await page.eval(`({ disabled: document.querySelector('[data-role="export-html"]').disabled, cancelHidden: document.querySelector('[data-role="export-html-cancel"]').hidden, focus: document.activeElement?.dataset?.role })`);
+      check('S9 취소하면 "취소했어요." 가 나오고 파일은 내려받아지지 않고 버튼이 다시 활성, 포커스는 내보내기 버튼', dl.begun.length === before && !after.disabled && after.cancelHidden && after.focus === 'export-html', JSON.stringify([dl.begun.length - before, after]));
+      await page.key('Escape');
+
+      // closing the dialog during an export cancels it too (no stray download)
+      await page.click('[data-role="topbar-export"]');
+      await page.waitFor('[data-role="share"] [data-role="export-html"]');
+      await sleep(500);
+      await page.click('[data-role="export-html"]');
+      await page.waitFor(`/담는 중/.test(document.querySelector('[data-role="export-html-status"]').textContent)`, { timeout: 8000 });
+      await page.key('Escape');
+      await page.waitFor(`!document.querySelector('[data-role="share"]')`);
+      await sleep(3500);
+      check('S9 만드는 중에 창을 닫으면 취소되고 파일이 내려오지 않음', dl.begun.length === before);
+
+      // the markdown subset is the same in both implementations (DOM vs string)
+      const parity = await page.eval(`(async () => {
+        const { renderRich } = await import('/js/lib/markdown.js');
+        const { renderRichHtml } = await import('/js/lib/export-html.js');
+        const corpus = ['', '한 줄', '첫째\\n둘째\\n\\n새 문단', '**굵게** *기울임* \`코드\` 섞어서', '- 하나\\n- 둘\\n문장\\n* 셋\\n• 넷', 'a * b * c', '*짝 없는 별', '**짝 없는 굵게', '보세요 https://example.com/a(b). 끝', '(https://example.com/x) 와 "https://example.com/y"', 'https://example.com', 'https://x.com/a_b?c=d&e=f#g 뒤', 'https://example.com/가나다', 'http://a.b/c;d,e', '<b onclick=alert(1)>x</b> <script>1</script> & &amp; " \\'', 'javascript:alert(1) data:text/html,x ftp://x', '\\r\\n윈도우\\r줄바꿈', '   - 들여쓴 목록\\n\\n\\n\\n- 띄운 목록', '이모지 😀 👨‍👩‍👧 와 한글', '**a**b*c*\`d\`e', 'x'.repeat(5000)];
+        const bad = [];
+        for (const t of corpus) {
+          const a = document.createElement('div'); a.appendChild(renderRich(t));
+          const b = document.createElement('div'); b.innerHTML = renderRichHtml(t);
+          if (a.innerHTML !== b.innerHTML) bad.push({ t: t.slice(0, 60), dom: a.innerHTML.slice(0, 200), str: b.innerHTML.slice(0, 200) });
+        }
+        return { n: corpus.length, bad, pwned: typeof window.__pwned };
+      })()`);
+      check(`S9 markdown.js(DOM) 와 export-html.js(문자열)의 결과가 ${parity.n}가지 입력에서 똑같음`, parity.bad.length === 0 && parity.pwned === 'undefined', JSON.stringify(parity.bad).slice(0, 400));
+      check('S9 방문자 화면 콘솔 오류 없음', page.errors.length === 0, page.errors.join(' | ').slice(0, 300));
+
+      // dashboard: one menu line, default options, progress in a toast
+      const D = await newUser('대시 교사');
+      ctxs.push(D.ctx);
+      const dd = await watchDownloads(raw, D.ctx.id, dlDir);
+      const nb = await call(D.page, 'POST', '/boards', { title: '대시보드 내보내기 보드', format: 'wall' });
+      const nslug = nb.body.board.slug;
+      await call(D.page, 'POST', `/boards/${nslug}/posts`, { title: '메뉴로 내보낸 글', body: '본문' });
+      await D.page.goto(base + '/dashboard');
+      await D.page.waitFor(`document.querySelector('.dash-card[data-slug="${nslug}"]')`, { timeout: 15000 });
+      await D.page.click(`.dash-card[data-slug="${nslug}"] .dash-more`);
+      await D.page.waitFor('.popover .menu-item');
+      const menuLabels = await D.page.eval(`[...document.querySelectorAll('.popover .menu-item')].map((b) => b.innerText.trim())`);
+      check('S9 대시보드 카드 메뉴에 "HTML 로 내보내기" 한 줄', menuLabels.includes('HTML 로 내보내기'), menuLabels.join(','));
+      const at = await D.page.eval(`(() => { const e = [...document.querySelectorAll('.popover .menu-item')].find((b) => b.innerText.includes('HTML 로 내보내기')); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+      const f4 = await dd.next(() => D.page.mouse(at.x, at.y), { timeout: 60000 });
+      const html4 = readFileSync(f4.path, 'utf8');
+      check('S9 대시보드 메뉴: 옵션 없이 바로 내려받음(edulet-<slug>-날짜.html), 글이 들어 있음', new RegExp(`^edulet-${nslug}-\\d{8}\\.html$`).test(f4.suggested) && html4.includes('메뉴로 내보낸 글') && html4.includes('대시보드 내보내기 보드') && !/<script/i.test(html4), f4.suggested);
+      await D.page.waitFor(`[...document.querySelectorAll('.toast')].some((t) => /내려받았어요/.test(t.textContent))`, { timeout: 5000 });
+      check('S9 대시보드 메뉴: 끝나면 토스트로 알림', true);
+      check('S9 대시보드 화면 콘솔 오류 없음', D.page.errors.length === 0, D.page.errors.join(' | ').slice(0, 300));
+    } finally {
+      raw.close();
+      for (const c of ctxs) await c.close().catch(() => {});
+      try { rmSync(dlDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  });
+  /* ══════════ S10 저장하기·불러오기 메뉴 (CONTRACT §5 "저장하기·불러오기"; 화면 public/js/views/backup-dialog.js) ══════════
+     서버 PC(localhost)에서 연 화면에서만 보이는 메뉴. 임시 data·임시 backupDir 의 자기 서버를 쓴다(진짜 backups/ 는 건드리지 않는다).
+     S10: 저장하기 → 바꾸기 → 불러오기(목록·미리보기·확인·진행·성공) → 다른 탭의 reset → 자동 저장본으로 왕복 / 게스트 / 다른 기기 / 사용자 메뉴 / 설정 변화 / 모바일.
+     S10b: 오류 코드별 안내(서버 응답을 흉내 낸 경우)·망가진 저장본·키보드. */
+  const bkDlg = '[data-role="backup-dialog"]';
+  const bkView = (P) => P.eval(`document.querySelector('${bkDlg}')?.dataset.view || null`);
+  const bkText = (P) => P.eval(`document.querySelector('${bkDlg}')?.innerText || ''`);
+  const bkWaitView = async (P, v, timeout = 15000) => {
+    try {
+      await P.waitFor(`document.querySelector('${bkDlg}')?.dataset.view === ${JSON.stringify(v)}`, { timeout });
+    } catch (e) { // say what the dialog shows instead
+      throw new Error(`${e.message} — 지금 화면: ${await bkView(P).catch(() => '?')} / ${String(await bkText(P).catch(() => '')).replace(/\s+/g, ' ').slice(0, 240)}`);
+    }
+  };
+  const bkOpen = async (P, which) => {
+    await P.click(`[data-role="backup-${which}"]`);
+    await P.waitFor(`document.querySelector('${bkDlg}')?.dataset.mode === ${JSON.stringify(which)}`);
+  };
+  /** Remember the status of every /api/backups* answer this page got (none may be a 401: api.js would sign the user out). Lost on reload. */
+  const bkRecord = (P) => P.eval(`(() => { if (window.__bkSeen) return 1; window.__bkSeen = []; const f = window.fetch.bind(window);
+    window.fetch = async (u, o) => { const r = await f(u, o); if (String(u).includes('/api/backups')) window.__bkSeen.push({ m: (o && o.method) || 'GET', s: r.status }); return r; }; return 1; })()`);
+  /** Answer the next request that matches (method + url regex) with a made-up server response, once. */
+  const bkStub = (P, stub) => P.eval(`(() => {
+    if (!window.__bkStubOn) { window.__bkStubOn = true; const f = window.fetch.bind(window);
+      window.fetch = async (u, o) => { const s = window.__bkStub; const m = (o && o.method) || 'GET';
+        if (s && !s.used && m === s.method && new RegExp(s.match).test(String(u))) { s.used = true; window.__bkStubHits = (window.__bkStubHits || 0) + 1;
+          return new Response(JSON.stringify(s.body), { status: s.status, headers: Object.assign({ 'Content-Type': 'application/json' }, s.headers || {}) }); }
+        return f(u, o); }; }
+    window.__bkStub = ${JSON.stringify(stub)}; window.__bkStubHits = 0; return 1; })()`);
+  const bkOverflow = (P) => P.eval(`({ page: document.documentElement.scrollWidth - window.innerWidth, wide: [...document.querySelectorAll('.bk, .bk *, .app-header *')].filter((e) => e.getBoundingClientRect().right > window.innerWidth + 1).map((e) => e.className || e.tagName).slice(0, 5) })`);
+  const bkMenuLabels = (P) => P.eval(`[...document.querySelectorAll('.popover .menu-item')].map((b) => b.innerText.trim())`);
+  const bkMenuClick = async (P, label) => {
+    const at = await P.eval(`(() => { const e = [...document.querySelectorAll('.popover .menu-item')].find((b) => b.innerText.trim() === ${JSON.stringify(label)}); const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    await P.mouse(at.x, at.y);
+  };
+  const bkStartApp = (hook) => createAppOnGoodPort(() => ({
+    dataDir: mkdtempSync(join(tmpdir(), 'edulet-e2e-bk-data-')), backupDir: mkdtempSync(join(tmpdir(), 'edulet-e2e-bk-save-')), port: 0, host: '0.0.0.0', seed: false, quiet: true,
+    previewFetcher: stubPreviewFetcher, backupHooks: hook,
+  }));
+  const bkRemove = (app2) => {
+    for (const d of [app2.app.config.dataDir, app2.app.config.backupDir]) { try { rmSync(d, { recursive: true, force: true }); } catch { /* ignore */ } }
+  };
+
+  await step('S10', async () => {
+    const lanIp = Object.values(osNetworkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal && !a.address.startsWith('169.254.'))?.address || null;
+    let hold = 0;
+    const appB = await bkStartApp({ afterSafetySave: async () => { if (hold) await sleep(hold); } });
+    const bkDir = appB.app.config.backupDir;
+    const dataB = appB.app.config.dataDir;
+    const baseB = appB.url.replace(/\/$/, ''); // http://localhost:PORT — the server PC's operator
+    const fsm = await import('node:fs');
+    const folders = () => fsm.readdirSync(bkDir).filter((n) => /^edulet-\d{8}-\d{6}(-\d+)?$/.test(n));
+    try {
+      const ctxA = await browser.newContext();
+      const A = await ctxA.newPage(baseB + '/');
+      const user = 'bk' + Math.random().toString(36).slice(2, 7);
+      const reg = await call(A, 'POST', '/auth/register', { username: user, password: 'password-1234', displayName: '저장 교사' });
+      if (reg.status !== 201 && reg.status !== 200) throw new Error('register failed ' + JSON.stringify(reg));
+      const mkBoard = async (title, n) => {
+        const b = (await call(A, 'POST', '/boards', { title, format: 'wall' })).body.board;
+        for (let i = 1; i <= n; i++) await call(A, 'POST', `/boards/${b.slug}/posts`, { title: `${title} 글 ${i}`, body: '본문' });
+        return b;
+      };
+      const postCount = async (slug) => ((await call(A, 'GET', `/boards/${slug}`)).body.posts || []).length;
+      const b1 = await mkBoard('저장 시험 보드', 2);
+
+      /* ── 진입점: 서버 PC 의 localhost 에서 연 헤더 ── */
+      await A.goto(baseB + '/dashboard');
+      await A.waitFor('[data-role="backup-save"]', { timeout: 15000 });
+      check('S10 서버 PC(localhost)에서 연 헤더에 "저장하기"·"불러오기" 버튼', (await A.text('[data-role="backup-save"]')) === '저장하기' && (await A.text('[data-role="backup-restore"]')) === '불러오기');
+      const cfg = await call(A, 'GET', '/config');
+      check('S10 /config.backup.available 이 true', !!cfg.body.backup && cfg.body.backup.available === true, JSON.stringify(cfg.body.backup));
+      await bkRecord(A);
+
+      /* ── 저장하기 ── */
+      await bkOpen(A, 'save');
+      await A.waitFor(`/아직 직접 저장한 적이 없어요/.test(document.querySelector('[data-role="last-saved"]')?.innerText || '')`, { timeout: 8000 });
+      check('S10 저장하기 창: 쉬운 안내문 + "아직 저장한 적이 없어요"', /수업 중에도 괜찮아요/.test(await bkText(A)));
+      await A.screenshot(join(OUT, 's10-save-idle.png'));
+      await A.eval(`(() => { const f = window.fetch; window.__posts = 0; window.fetch = async (u, o) => { if (String(u).endsWith('/api/backups') && o && o.method === 'POST') { window.__posts++; await new Promise((r) => setTimeout(r, 1200)); } return f(u, o); }; })()`);
+      await A.eval(`(() => { const b = document.querySelector('[data-role="save-now"]'); b.click(); b.click(); })()`); // a double click
+      await A.waitFor(`document.querySelector('[data-role="save-now"]')?.disabled === true`, { timeout: 3000 });
+      const busyUi = await A.eval(`({ working: !!document.querySelector('[data-role="backup-working"]'), locked: document.querySelector('${bkDlg}').classList.contains('bk-locked'), x: getComputedStyle(document.querySelector('${bkDlg} .modal-head .btn-icon')).display })`);
+      check('S10 저장 중: 진행 표시·버튼 잠김·닫기(X) 숨김', busyUi.working && busyUi.locked && busyUi.x === 'none', JSON.stringify(busyUi));
+      await A.key('Escape');
+      check('S10 저장 중에는 Esc 로 닫히지 않음', await A.exists(bkDlg));
+      await bkWaitView(A, 'result');
+      check('S10 더블클릭해도 저장 요청은 한 번, 백업 폴더도 하나', (await A.eval('window.__posts')) === 1 && folders().length === 1, `posts=${await A.eval('window.__posts')} folders=${folders().length}`);
+      const savedText = await bkText(A);
+      check('S10 저장 결과: 보드 1개·글 2개·사용자 1명 + 폴더 이름(절대 경로는 없음)',
+        /보드 1개 · 글 2개 · 사용자 1명/.test(savedText) && savedText.includes(folders()[0]) && !/[A-Za-z]:[\\/]/.test(savedText) && !savedText.includes(dataB) && !savedText.includes(bkDir), savedText);
+      await A.screenshot(join(OUT, 's10-save-result.png'));
+      await A.click('[data-role="close"]');
+      await A.waitFor(`!document.querySelector('${bkDlg}')`);
+      check('S10 창을 닫으면 포커스가 헤더의 "저장하기" 버튼으로 돌아옴', (await A.eval(`document.activeElement && document.activeElement.dataset.role`)) === 'backup-save');
+
+      /* ── 저장 뒤에 바꾸기 ── */
+      await call(A, 'POST', `/boards/${b1.slug}/posts`, { title: '저장 뒤에 쓴 글 1', body: 'x' });
+      await call(A, 'POST', `/boards/${b1.slug}/posts`, { title: '저장 뒤에 쓴 글 2', body: 'x' });
+      const b2 = await mkBoard('저장 뒤에 만든 보드', 1);
+      check('S10 (준비) 저장 뒤 글 3개·보드 1개가 늘어남', (await postCount(b1.slug)) === 4 && (await postCount(b2.slug)) === 1);
+
+      /* ── 불러오기: 목록 → 미리보기 → 확인. 보드 화면(실시간 연결이 열려 있는 탭)에서 사용자 메뉴로 연다 ── */
+      await A.goto(baseB + '/b/' + b1.slug);
+      await A.waitFor('[data-post-id]', { timeout: 15000 });
+      await bkRecord(A);
+      await A.click('.app-uc-btn');
+      await A.waitFor('.popover');
+      const menuLabels = await bkMenuLabels(A);
+      check('S10 보드 화면의 사용자 메뉴에 "저장하기"·"불러오기"(로그아웃 앞)', menuLabels.includes('저장하기') && menuLabels.includes('불러오기') && menuLabels.indexOf('불러오기') < menuLabels.indexOf('로그아웃'), menuLabels.join(','));
+      await bkMenuClick(A, '불러오기');
+      await A.waitFor(`document.querySelector('${bkDlg}')?.dataset.mode === 'restore'`);
+      await bkWaitView(A, 'list');
+      const nowTxt = await A.text('[data-role="current-state"]');
+      const opt0 = await A.text('[data-role="backup-option"]');
+      check('S10 불러오기 목록: "지금 서버 보드 2개·글 5개" + 저장본 한 줄(직접 저장·보드 1개·글 2개)', /보드 2개 · 글 5개/.test(nowTxt) && (await A.count('[data-role="backup-option"]')) === 1 && /직접 저장/.test(opt0) && /보드 1개 · 글 2개/.test(opt0), nowTxt + ' | ' + opt0);
+      await A.waitFor(`document.activeElement && document.activeElement.getAttribute('role') === 'option'`, { timeout: 3000 }).catch(() => {});
+      check('S10 목록 의미: role=listbox 안의 role=option, 첫 줄이 포커스를 받음',
+        (await A.eval(`document.querySelector('[data-role="backup-list"]').getAttribute('role')`)) === 'listbox' && (await A.eval(`document.activeElement && document.activeElement.getAttribute('role')`)) === 'option');
+      await A.screenshot(join(OUT, 's10-restore-list.png'));
+      await A.key('Enter'); // keyboard: open the focused row
+      await bkWaitView(A, 'preview');
+      const head = await A.text('[data-role="compare-headline"]');
+      check('S10 미리보기: "저장본 글 2개 ↔ 지금 글 5개 — 불러오면 지금보다 글이 3개 적어져요" (보드도)', /저장본 글 2개 ↔ 지금 글 5개/.test(head) && /글이 3개 적어져요/.test(head) && /보드가 1개 적어져요/.test(head), head);
+      const bl = await A.eval(`[...document.querySelectorAll('[data-role="preview-boards"] li')].map((li) => li.innerText)`);
+      check('S10 미리보기: 저장본의 보드 목록(제목·글 수)', bl.length === 1 && /저장 시험 보드/.test(bl[0]) && /글 2개/.test(bl[0]), JSON.stringify(bl));
+      await A.screenshot(join(OUT, 's10-preview.png'));
+      await A.click('[data-role="go-confirm"]');
+      await bkWaitView(A, 'confirm');
+      const confirmText = await bkText(A);
+      check('S10 확인 단계: 자동 저장·계정과 비밀번호가 저장 당시로·다른 기기 새로고침·몇 초 걸림 안내', /자동으로 저장돼요/.test(confirmText) && /되돌릴 수 있어요/.test(confirmText) && /계정과 비밀번호도 저장 당시로 돌아가요/.test(confirmText) && /다시 로그인/.test(confirmText) && /다른 기기/.test(confirmText) && /몇 초/.test(confirmText), confirmText);
+      check('S10 확인 단계의 불러오기 단추는 빨강(위험)이 아니라 기본 강조색', await A.eval(`(() => { const b = document.querySelector('[data-role="restore-go"]'); return b.classList.contains('btn-primary') && !b.classList.contains('btn-danger'); })()`));
+      await A.screenshot(join(OUT, 's10-confirm.png'));
+
+      /* ── 불러오기 실행: 같은 서버의 다른 탭(보드 화면)은 reset 으로 새로고침, 시작한 탭은 결과를 보여 준 뒤 스스로 이동 ── */
+      const B = await ctxA.newPage(baseB + '/b/' + b1.slug); // a second tab of the same browser on the same board
+      await B.waitFor('[data-post-id]', { timeout: 15000 });
+      await B.eval(`window.__m2 = 'tab2'; sessionStorage.removeItem('sawReset'); new MutationObserver(() => { const t = document.getElementById('toasts'); if (t && /저장본을 불러와서/.test(t.innerText)) sessionStorage.setItem('sawReset', '1'); }).observe(document.body, { childList: true, subtree: true, characterData: true }); 1`);
+      await sleep(600); // B's event stream is registered
+      hold = 12000; // keep the restore running long enough to look at (and poke) the progress screen — CDP calls can be slow while the server works
+      await A.eval(`window.__m1 = 'tab1'; window.__EDULET_BACKUP_MOVE_MS = 120000; 1`); // look at the result screen first; the button below does the move
+      await A.click('[data-role="restore-go"]');
+      await bkWaitView(A, 'working', 5000);
+      const workUi = await A.eval(`({ spin: !!document.querySelector('[data-role="backup-working"]'), locked: document.querySelector('${bkDlg}').classList.contains('bk-locked'), x: getComputedStyle(document.querySelector('${bkDlg} .modal-head .btn-icon')).display, btn: document.querySelector('[data-role="restore-go"]').disabled })`);
+      check('S10 불러오는 중: 진행 표시·버튼 잠김·닫기(X) 숨김', workUi.spin && workUi.locked && workUi.x === 'none' && workUi.btn, JSON.stringify(workUi));
+      await A.key('Escape');
+      await A.mouse(5, 5); // a click on the backdrop
+      check('S10 불러오는 중에는 Esc·바깥 클릭으로 닫히지 않음', (await A.exists(bkDlg)) && (await bkView(A)) === 'working');
+      await A.screenshot(join(OUT, 's10-working.png'));
+      await bkWaitView(A, 'result', 40000);
+      check('S10 불러오기를 시작한 탭은 reset 신호로 스스로 새로고침하지 않고 결과 화면을 보여 줌', (await A.eval('window.__m1')) === 'tab1');
+      const doneText = await bkText(A);
+      check('S10 성공 화면: "불러왔어요" + 이전 데이터를 자동 저장해 둔 안내', /불러왔어요/.test(doneText) && /자동 저장/.test(doneText) && /다시 고를 수 있어요/.test(doneText), doneText);
+      await A.screenshot(join(OUT, 's10-restored.png'));
+      const seenA = await A.eval('window.__bkSeen');
+      check('S10 이 창의 /api/backups* 응답에 401 이 하나도 없음(있으면 api.js 가 로그아웃시킴), 불러오기 POST 는 200', seenA.every((x) => x.s !== 401) && seenA.some((x) => x.m === 'POST' && x.s === 200), JSON.stringify(seenA));
+      await B.waitFor('(window.__m2 === undefined)', { timeout: 15000 });
+      check('S10 같은 서버의 다른 탭(보드 화면)이 reset 으로 새로고침됨', true);
+      check('S10 그 탭에 "저장본을 불러와서 화면을 새로 고쳐요" 안내가 떴음', (await B.eval(`sessionStorage.getItem('sawReset')`)) === '1');
+      await B.waitFor('[data-post-id]', { timeout: 15000 });
+      check('S10 새로고침된 탭은 저장 당시의 글 2장을 보여 줌', (await B.count('[data-post-id]')) === 2, 'n=' + (await B.count('[data-post-id]')));
+      await B.eval('window.__m3 = 1; 1');
+      await sleep(2500);
+      check('S10 reset 뒤 새로고침 루프가 없음(새 연결은 정상 hello)', (await B.eval('window.__m3')) === 1);
+      check('S10 성공 화면에 [화면 새로 고치기] 단추(읽을 게 없으면 곧 자동 이동한다는 문구)', (await A.exists('[data-role="reload"]')) && /곧 화면을 새로 고쳐요/.test(doneText));
+      await A.click('[data-role="reload"]');
+      await A.waitFor(`(window.__m1 === undefined && location.pathname === '/dashboard')`, { timeout: 15000 });
+      check('S10 단추를 누르면 전체 새로고침으로 /dashboard 에 도착(SPA 이동이 아님)', true);
+      check('S10 저장 당시로 되돌아감: 보드1 글 2개, 저장 뒤에 만든 보드는 사라짐(404)', (await postCount(b1.slug)) === 2 && (await call(A, 'GET', `/boards/${b2.slug}`)).status === 404);
+      check('S10 같은 서버의 저장본이라 로그인이 유지됨', (await call(A, 'GET', '/auth/me')).body.user?.username === user);
+      check('S10 복원 직전 자동 저장 폴더가 생김(저장 1 + 자동 1)', folders().length === 2, 'folders=' + folders().length);
+
+      /* ── 왕복: 방금 생긴 "자동 저장"으로 다시 불러오면 저장 뒤의 상태가 돌아옴 ── */
+      hold = 0;
+      await A.waitFor('[data-role="backup-restore"]');
+      await bkOpen(A, 'restore');
+      await bkWaitView(A, 'list');
+      const kinds = await A.eval(`[...document.querySelectorAll('[data-role="backup-option"]')].map((o) => o.dataset.kind)`);
+      check('S10 목록 맨 위에 "자동 저장"(복원 직전) 항목이 생김', kinds.length === 2 && kinds[0] === 'before-restore' && kinds[1] === 'manual', JSON.stringify(kinds));
+      check('S10 자동 저장 줄에 "자동 저장" 배지', /자동 저장/.test(await A.text('[data-role="backup-option"][data-kind="before-restore"]')));
+      await A.screenshot(join(OUT, 's10-list-with-auto.png'));
+      await A.click('[data-role="backup-option"][data-kind="before-restore"]');
+      await bkWaitView(A, 'preview');
+      const head2 = await A.text('[data-role="compare-headline"]');
+      check('S10 자동 저장 미리보기: 저장본 글 5개 ↔ 지금 글 2개, "많아져요"', /저장본 글 5개 ↔ 지금 글 2개/.test(head2) && /글이 3개 많아져요/.test(head2), head2);
+      await A.click('[data-role="go-confirm"]');
+      await bkWaitView(A, 'confirm');
+      await A.eval(`window.__m1b = 'again'; 1`);
+      await A.click('[data-role="restore-go"]');
+      await bkWaitView(A, 'result', 30000);
+      await A.waitFor('(window.__m1b === undefined)', { timeout: 15000 }); // nobody pressed anything: the result screen moves on by itself
+      await A.waitFor('.dash-card', { timeout: 15000 });
+      check('S10 왕복: 자동 저장본으로 다시 불러오면 글 4개·두 번째 보드(글 1개)가 돌아옴', (await postCount(b1.slug)) === 4 && (await postCount(b2.slug)) === 1, `b1=${await postCount(b1.slug)} b2=${await postCount(b2.slug)}`);
+      check('S10 두 번째 불러오기도 자동 저장을 남김(폴더 3개)', folders().length === 3, 'folders=' + folders().length);
+
+      /* ── 사용자 메뉴로 연 창은 닫으면 그 메뉴 버튼으로 포커스가 돌아옴 ── */
+      await A.goto(baseB + '/b/' + b1.slug);
+      await A.waitFor('[data-post-id]', { timeout: 15000 });
+      await A.click('.app-uc-btn');
+      await A.waitFor('.popover');
+      await bkMenuClick(A, '저장하기');
+      await A.waitFor(`document.querySelector('${bkDlg}')?.dataset.mode === 'save'`);
+      await A.key('Escape');
+      await A.waitFor(`!document.querySelector('${bkDlg}')`);
+      check('S10 사용자 메뉴로 연 창을 닫으면 포커스가 그 메뉴 버튼으로 돌아옴', (await A.eval(`document.activeElement && document.activeElement.classList.contains('app-uc-btn')`)) === true);
+
+      /* ── 설정이 바뀌면 메뉴가 나타나고 사라짐 ── */
+      await A.goto(baseB + '/dashboard');
+      await A.waitFor('[data-role="backup-nav"] button', { timeout: 15000 });
+      await A.eval(`import('/js/lib/store.js').then(({ store }) => { window.__cfgBk = store.config; store.set('config', { ...store.config, backup: { available: false } }); return 1; })`);
+      check('S10 설정이 available=false 로 바뀌면 헤더 버튼이 사라짐(숨김이 아니라 제거)', (await A.count('[data-role="backup-nav"] button')) === 0);
+      await A.click('.app-uc-btn');
+      await A.waitFor('.popover');
+      check('S10 그때 사용자 메뉴에도 없음', !(await bkMenuLabels(A)).includes('저장하기'));
+      await A.key('Escape');
+      await A.eval(`import('/js/lib/store.js').then(({ store }) => { store.set('config', window.__cfgBk); return 1; })`);
+      check('S10 다시 available=true 가 되면 버튼 둘이 나타남', (await A.count('[data-role="backup-nav"] button')) === 2);
+
+      /* ── 모바일 폭: 헤더는 아이콘만, 창은 가로로 넘치지 않음 ── */
+      for (const w of [390, 320]) {
+        await A.setViewport(w, 740, true, 2);
+        await sleep(250);
+        const hdr = await A.eval(`(() => { const b = [...document.querySelectorAll('[data-role="backup-nav"] button')]; return { n: b.length, w: b.map((x) => Math.round(x.getBoundingClientRect().width)), label: b.map((x) => getComputedStyle(x.querySelector('.app-backup-label')).display), names: b.map((x) => x.getAttribute('aria-label')) }; })()`);
+        check(`S10 모바일 ${w}px: 헤더에 저장하기·불러오기가 아이콘으로 남고(이름은 aria-label) 넘치지 않음`, hdr.n === 2 && hdr.w.every((x) => x >= 36) && hdr.label.every((d) => d === 'none') && hdr.names.join() === '저장하기,불러오기' && (await bkOverflow(A)).page <= 0, JSON.stringify(hdr));
+        await bkOpen(A, 'restore');
+        await bkWaitView(A, 'list');
+        await A.click('[data-role="backup-option"]');
+        await bkWaitView(A, 'preview');
+        const ov = await bkOverflow(A);
+        check(`S10 모바일 ${w}px: 불러오기 미리보기가 가로로 넘치지 않음`, ov.page <= 0 && ov.wide.length === 0, JSON.stringify(ov));
+        await A.screenshot(join(OUT, `s10-mobile-${w}.png`));
+        await A.key('Escape');
+        await A.waitFor(`!document.querySelector('${bkDlg}')`);
+      }
+      await A.setViewport(1280, 860);
+      check('S10 서버 PC 화면 콘솔 오류 없음', A.errors.length === 0, A.errors.join(' | ').slice(0, 300));
+
+      /* ── 게스트(교사 계정이 있는 서버): 403 member_required → 안내 + 로그인하면 하던 일을 이어서 ── */
+      const ctxG = await browser.newContext();
+      const G = await ctxG.newPage(baseB + '/');
+      await call(G, 'POST', '/auth/guest', { displayName: '게스트 손님' });
+      await G.goto(baseB + '/');
+      await G.waitFor('[data-role="backup-save"]', { timeout: 15000 });
+      await bkRecord(G);
+      const gl = await call(G, 'GET', '/backups');
+      check('S10 게스트 세션: 목록 API 는 403 member_required(401 이 아님)', gl.status === 403 && gl.body.error?.code === 'member_required', JSON.stringify(gl));
+      await G.click('[data-role="backup-save"]');
+      await G.waitFor(`document.querySelector('[data-role="backup-problem"] .bk-box')`, { timeout: 8000 });
+      check('S10 게스트: 저장하기 창에 "교사 계정으로 로그인" 안내 + 로그인 단추', /계정으로 로그인한 뒤에 쓸 수 있어요/.test(await bkText(G)) && (await G.exists('[data-role="login"]')));
+      await G.screenshot(join(OUT, 's10-guest-login.png'));
+      check('S10 게스트는 그 뒤에도 게스트로 로그인된 채(401 처리로 로그아웃되지 않음)', (await call(G, 'GET', '/auth/me')).body.user?.isGuest === true && (await G.eval(`import('/js/lib/store.js').then((m) => !!m.store.me && m.store.me.isGuest === true)`)) === true);
+      await G.click('[data-role="login"]');
+      await G.waitFor(`document.activeElement === document.querySelector('[data-role="auth"] [name=username]')`, { timeout: 5000 }); // the modal moves the focus by itself a moment later
+      await G.type('[data-role="auth"] [name=username]', user);
+      await G.type('[data-role="auth"] [name=password]', 'password-1234');
+      await G.click('[data-role="auth-submit"]');
+      await bkWaitView(G, 'result', 20000).catch(async (e) => { throw new Error(`${e.message} · 로그인 창: ${await G.eval(`document.querySelector('[data-role="auth"] .form-error')?.innerText || '(없음)'`)}`); });
+      check('S10 로그인하면 하던 "저장하기"가 이어서 실행되어 결과가 나옴', /저장했어요/.test(await bkText(G)) && folders().length === 4, 'folders=' + folders().length);
+      check('S10 게스트 창의 /api/backups* 응답에도 401 이 없음', (await G.eval('window.__bkSeen')).every((x) => x.s !== 401));
+      await ctxG.close();
+
+      /* ── 다른 기기(LAN 주소): 메뉴가 없고 API 는 403 backup_local_only ── */
+      if (!lanIp) console.log('INFO  S10 이 PC 에 사설 IPv4 가 없어 "다른 기기" 확인을 건너뜀');
+      else {
+        const L0 = `http://${lanIp}:${appB.port}`;
+        const ctxL = await browser.newContext();
+        const L = await ctxL.newPage(L0 + '/');
+        await L.waitFor('.app-header', { timeout: 15000 });
+        const lcfg = await call(L, 'GET', '/config');
+        check('S10 다른 기기(LAN 주소): /config.backup.available=false', !!lcfg.body.backup && lcfg.body.backup.available === false, JSON.stringify(lcfg.body.backup));
+        check('S10 다른 기기: 헤더에 저장하기·불러오기 버튼이 없음', (await L.count('[data-role="backup-nav"] button')) === 0);
+        const la = await call(L, 'GET', '/backups');
+        check('S10 다른 기기: 저장하기·불러오기 API 는 403 backup_local_only', la.status === 403 && la.body.error?.code === 'backup_local_only', JSON.stringify(la));
+        await call(L, 'POST', '/auth/login', { username: user, password: 'password-1234' });
+        await L.goto(L0 + '/dashboard');
+        await L.waitFor('.app-uc-btn', { timeout: 15000 });
+        await L.click('.app-uc-btn');
+        await L.waitFor('.popover');
+        const ll = await bkMenuLabels(L);
+        check('S10 다른 기기: 교사로 로그인해도 사용자 메뉴에 저장하기·불러오기가 없음', !ll.includes('저장하기') && !ll.includes('불러오기') && ll.includes('로그아웃'), ll.join(','));
+        await ctxL.close();
+      }
+      await ctxA.close();
+    } finally {
+      await appB.close();
+      bkRemove(appB);
+    }
+  });
+
+  await step('S10b', async () => {
+    const appC = await bkStartApp(null);
+    const bkDirC = appC.app.config.backupDir;
+    const baseC = appC.url.replace(/\/$/, '');
+    const fsm = await import('node:fs');
+    const folders = () => fsm.readdirSync(bkDirC).filter((n) => /^edulet-\d{8}-\d{6}(-\d+)?$/.test(n));
+    try {
+      const ctx = await browser.newContext();
+      const P = await ctx.newPage(baseC + '/');
+      const user = 'bkb' + Math.random().toString(36).slice(2, 7);
+      const reg = await call(P, 'POST', '/auth/register', { username: user, password: 'password-1234', displayName: '오류 시험' });
+      if (reg.status !== 201 && reg.status !== 200) throw new Error('register failed ' + JSON.stringify(reg));
+      const b = (await call(P, 'POST', '/boards', { title: '오류 시험 보드', format: 'wall' })).body.board;
+      await call(P, 'POST', `/boards/${b.slug}/posts`, { title: '글', body: '본문' });
+      await call(P, 'POST', '/backups'); // one good copy
+      // a copy that cannot be read (damaged file) next to it: listed, previewable, not restorable
+      const bad = join(bkDirC, 'edulet-20250101-000000');
+      fsm.mkdirSync(bad);
+      fsm.writeFileSync(join(bad, 'edulet.db'), Buffer.alloc(4096, 7));
+      fsm.writeFileSync(join(bad, 'BACKUP-INFO.txt'), 'x');
+      const before = folders().length;
+      const postsNow = async () => ((await call(P, 'GET', `/boards/${b.slug}`)).body.posts || []).length;
+      await P.goto(baseC + '/dashboard');
+      await P.waitFor('[data-role="backup-save"]', { timeout: 15000 });
+      await bkRecord(P);
+
+      /* ── 저장하기 오류 ── */
+      await bkOpen(P, 'save');
+      await P.waitFor(`/마지막 저장/.test(document.querySelector('[data-role="last-saved"]')?.innerText || '') && !/확인하는 중/.test(document.querySelector('[data-role="last-saved"]').innerText)`, { timeout: 8000 });
+      const tryStub = async (stub, role, wantRe, label) => {
+        await bkStub(P, stub);
+        await P.click(`[data-role="${role}"]`);
+        await P.waitFor(`(window.__bkStubHits === 1)`, { timeout: 5000 });
+        await sleep(200);
+        const t = await bkText(P);
+        check(label, wantRe.test(t), t.slice(0, 300));
+      };
+      await tryStub({ match: '/api/backups$', method: 'POST', status: 409, body: { error: { code: 'busy', message: '다른 저장·불러오기가 진행 중이에요.' } } }, 'save-now', /다른 저장·불러오기가 진행 중이에요\. 잠시 뒤에 다시 해 주세요/, 'S10b 저장하기 409 busy → "다른 저장·불러오기가 진행 중이에요. 잠시 뒤에 다시"');
+      check('S10b 오류 뒤 저장 단추가 다시 눌러지고 창이 잠겨 있지 않음', await P.eval(`!document.querySelector('[data-role="save-now"]').disabled && !document.querySelector('${bkDlg}').classList.contains('bk-locked')`));
+      await tryStub({ match: '/api/backups$', method: 'POST', status: 429, headers: { 'Retry-After': '30' }, body: { error: { code: 'rate_limited', message: '저장을 너무 자주 하고 있어요. 잠시 뒤에 다시 해 주세요.' } } }, 'save-now', /너무 자주.*30초/, 'S10b 저장하기 429 → 대기 시간(30초)을 알려 줌');
+      await tryStub({ match: '/api/backups$', method: 'POST', status: 403, body: { error: { code: 'backup_local_only', message: 'x' } } }, 'save-now', /localhost 주소로 열었을 때만/, 'S10b 저장하기 403 backup_local_only → "서버를 켠 PC 의 localhost" 안내');
+      await tryStub({ match: '/api/backups$', method: 'POST', status: 500, body: { error: { code: 'backup_failed', message: '디스크 공간이 부족해요.' } } }, 'save-now', /디스크 공간이 부족해요/, 'S10b 저장하기 500 backup_failed → 서버가 준 한국어 이유 그대로');
+      await tryStub({ match: '/api/backups$', method: 'POST', status: 403, body: { error: { code: 'member_required', message: 'x' } } }, 'save-now', /계정으로 로그인한 뒤에 쓸 수 있어요/, 'S10b 저장하기 403 member_required → 로그인 안내');
+      check('S10b member_required 에는 [로그인] 단추가 있고 누르면 로그인 창이 열림', await (async () => { await P.click('[data-role="login"]'); await P.waitFor('[data-role="auth"]', { timeout: 5000 }); return true; })());
+      await P.key('Escape');
+      await P.waitFor(`!document.querySelector('[data-role="auth"]')`);
+      await P.eval(`document.querySelector('[data-role="close"]').click(); 1`);
+      await P.waitFor(`!document.querySelector('${bkDlg}')`);
+      check('S10b (오류 안내는 서버를 바꾸지 않음) 백업 폴더 수 그대로', folders().length === before, `${folders().length} vs ${before}`);
+
+      /* ── 불러오기 오류 ── */
+      await bkOpen(P, 'restore');
+      await bkWaitView(P, 'list');
+      check('S10b 목록에 정상 저장본 + 읽을 수 없는 저장본("내용은 미리보기에서 확인해요")이 함께 보임', (await P.count('[data-role="backup-option"]')) === 2 && /내용은 미리보기에서 확인해요/.test(await P.text('[data-role="backup-option"][data-id="edulet-20250101-000000"]')));
+      // keyboard: arrows move the selection (aria-selected), Home/End jump
+      await P.waitFor(`document.activeElement && document.activeElement.getAttribute('role') === 'option'`);
+      const sel = async () => P.eval(`[...document.querySelectorAll('[data-role="backup-option"]')].map((o) => o.getAttribute('aria-selected')).join()`);
+      await P.key('ArrowDown');
+      const afterDown = await sel();
+      await P.key('Home');
+      const afterHome = await sel();
+      check('S10b 목록 키보드: ↓ 로 다음 줄 선택, Home 으로 첫 줄', afterDown === 'false,true' && afterHome === 'true,false', afterDown + ' / ' + afterHome);
+      // the damaged copy: a preview that says why, and no way forward
+      await P.click('[data-role="backup-option"][data-id="edulet-20250101-000000"]');
+      await bkWaitView(P, 'preview');
+      check('S10b 읽을 수 없는 저장본의 미리보기: 이유(422 backup_invalid)를 보여 주고 불러오기 단추는 꺼짐', /불러올 수 없어요/.test(await bkText(P)) && (await P.exists(`${bkDlg} .bk-box.is-error`)) && (await P.eval(`document.querySelector('[data-role="go-confirm"]').disabled`)));
+      await P.screenshot(join(OUT, 's10b-invalid.png'));
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'list');
+      // preview of a copy that vanished meanwhile (404 backup_not_found) -> says so, and "목록 새로 고침" gets the list back
+      await bkStub(P, { match: '/api/backups/edulet-[0-9-]+$', method: 'GET', status: 404, body: { error: { code: 'backup_not_found', message: '그 저장본을 찾을 수 없어요.' } } });
+      await P.click('[data-role="backup-option"]:not([data-id="edulet-20250101-000000"])');
+      await bkWaitView(P, 'error');
+      check('S10b 미리보기 404 backup_not_found → "찾을 수 없어요" + [목록 새로 고침]', /찾을 수 없어요/.test(await bkText(P)) && (await P.exists('[data-role="reload-list"]')));
+      await P.click('[data-role="reload-list"]');
+      await bkWaitView(P, 'list');
+      // a preview can be rate limited too: it says how long to wait, and [다시 시도] asks again
+      await bkStub(P, { match: '/api/backups/edulet-[0-9-]+$', method: 'GET', status: 429, headers: { 'Retry-After': '15' }, body: { error: { code: 'rate_limited', message: '요청이 너무 많아요.' } } });
+      await P.click('[data-role="backup-option"]:not([data-id="edulet-20250101-000000"])');
+      await bkWaitView(P, 'error');
+      check('S10b 미리보기 429 → 대기 시간(15초) 안내 + [다시 시도]', /너무 많아요.*15초/.test(await bkText(P)) && (await P.exists('[data-role="retry"]')), await bkText(P));
+      await P.click('[data-role="retry"]');
+      await bkWaitView(P, 'preview');
+      // a copy is asked for once: coming back to it again does not call the server again
+      await P.eval(`window.__previewGets = 0; (() => { const f = window.fetch; window.fetch = async (u, o) => { if (/[/]api[/]backups[/]edulet-[0-9-]+$/.test(String(u))) window.__previewGets++; return f(u, o); }; })()`);
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'list');
+      await P.click('[data-role="backup-option"]:not([data-id="edulet-20250101-000000"])');
+      await bkWaitView(P, 'preview');
+      check('S10b 같은 저장본을 다시 열어도 서버에 미리보기를 다시 묻지 않음(한 번만)', (await P.eval('window.__previewGets')) === 0, 'gets=' + (await P.eval('window.__previewGets')));
+      // restore errors: the data must stay as it is and the flag that mutes this tab's reset must be off again
+      await P.click('[data-role="go-confirm"]');
+      await bkWaitView(P, 'confirm');
+      const restoreTry = async (stub, wantRe, label, wantView = 'error') => {
+        await bkStub(P, stub);
+        await P.click('[data-role="restore-go"]');
+        await P.waitFor(`(window.__bkStubHits === 1)`, { timeout: 5000 });
+        await bkWaitView(P, wantView, 8000);
+        const t = await bkText(P);
+        check(label, wantRe.test(t), t.slice(0, 300));
+      };
+      const restoring = () => P.eval(`import('/js/lib/backup-state.js').then((m) => m.backupState.restoring)`);
+      await restoreTry({ match: '/restore$', method: 'POST', status: 409, body: { error: { code: 'data_changed', message: 'x' } } }, /그동안 다른 변경이 있어 중단했어요.*그대로/, 'S10b 불러오기 409 data_changed → "다른 변경이 있어 중단했어요, 지금 데이터는 그대로" + 다시 해 달라는 안내');
+      check('S10b 실패하면 "내 탭 reset 무시" 표식(restoring)이 다시 꺼짐', (await restoring()) === false);
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'confirm');
+      await restoreTry({ match: '/restore$', method: 'POST', status: 503, headers: { 'Retry-After': '3' }, body: { error: { code: 'busy', message: 'x' } } }, /다른 저장·불러오기가 진행 중이에요/, 'S10b 불러오기 503 busy → "진행 중이에요, 잠시 뒤에 다시"');
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'confirm');
+      await restoreTry({ match: '/restore$', method: 'POST', status: 429, headers: { 'Retry-After': '20' }, body: { error: { code: 'rate_limited', message: '불러오기를 너무 자주 하고 있어요.' } } }, /너무 자주.*20초/, 'S10b 불러오기 429 → 대기 시간(20초)');
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'confirm');
+      await restoreTry({ match: '/restore$', method: 'POST', status: 403, body: { error: { code: 'member_required', message: 'x' } } }, /계정으로 로그인한 뒤에 쓸 수 있어요/, 'S10b 불러오기 403 member_required → 로그인 안내(+ [로그인])');
+      check('S10b 그 화면에 [로그인] 단추가 있음', await P.exists('[data-role="login"]'));
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'confirm');
+      await restoreTry({ match: '/restore$', method: 'POST', status: 400, body: { error: { code: 'confirm_required', message: 'x' } } }, /화면 오류/, 'S10b 불러오기 400 confirm_required(화면 버그) → 새로 고침 안내');
+      await P.click('[data-role="back"]');
+      await bkWaitView(P, 'confirm');
+      await restoreTry({ match: '/restore$', method: 'POST', status: 422, body: { error: { code: 'backup_invalid', message: '더 새로운 Edulet 로 만든 저장본이에요.' } } }, /불러올 수 없어요.*더 새로운 Edulet/, 'S10b 불러오기 422 backup_invalid → 이유와 함께 미리보기 화면(불러오기 단추 꺼짐)', 'preview');
+      check('S10b 이 모든 실패 뒤에도 서버 데이터·백업 폴더는 그대로', (await postsNow()) === 1 && folders().length === before, `posts=${await postsNow()} folders=${folders().length} before=${before}`);
+      const seen = await P.eval('window.__bkSeen');
+      check('S10b 이 창의 /api/backups* 실제 응답에 401 이 없음', seen.every((x) => x.s !== 401), JSON.stringify(seen));
+      // Esc closes the dialog (nothing is running) and the focus goes back to the header button
+      await P.key('Escape');
+      await P.waitFor(`!document.querySelector('${bkDlg}')`);
+      check('S10b Esc 로 닫으면 포커스가 헤더의 "불러오기" 버튼으로 돌아옴', (await P.eval(`document.activeElement && document.activeElement.dataset.role`)) === 'backup-restore');
+      // the list itself can say "login": 403 on GET /backups
+      await bkStub(P, { match: '/api/backups$', method: 'GET', status: 403, body: { error: { code: 'member_required', message: 'x' } } });
+      await P.click('[data-role="backup-restore"]');
+      await bkWaitView(P, 'error');
+      check('S10b 목록 403 member_required → 로그인 안내와 [로그인] 단추', /로그인이 필요해요/.test(await bkText(P)) && (await P.exists('[data-role="login"]')));
+      await P.key('Escape');
+      check('S10b 콘솔 오류 없음', P.errors.length === 0, P.errors.join(' | ').slice(0, 300));
+      await ctx.close();
+    } finally {
+      await appC.close();
+      bkRemove(appC);
     }
   });
 } finally {

@@ -76,7 +76,7 @@ export function authenticate(app, req) {
   );
   if (!row) return null;
   if (row.expires_at <= now()) {
-    app.db.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash);
+    if (!app.maintenance) app.db.run('DELETE FROM sessions WHERE token_hash = ?', tokenHash); // reads only while a restore replaces the data
     return null;
   }
   return { user: row, tokenHash };

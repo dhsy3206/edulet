@@ -278,6 +278,17 @@
 .bp-share-access .field { margin-bottom: 10px; }
 .bp-share-wrap { flex-wrap: wrap; }
 .bp-share-check { margin: 4px 0 12px; }
+.bp-export-html { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+.bp-export-html > strong { display: block; margin-bottom: 4px; }
+.bp-export-html .field { margin: 10px 0 8px; }
+.bp-export-html .checkbox { margin: 0 0 12px; }
+.bp-export-bar { display: block; width: 100%; height: 8px; margin-top: 10px; accent-color: var(--brand); }
+.bp-export-bar[hidden] { display: none; }
+.bp-export-status { margin-top: 8px; min-height: 1.5em; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.bp-export-status.is-error { color: var(--danger); font-weight: 600; }
+.bp-export-html > .hint { margin-top: 6px; }
+/* the narrowest phones (≤ 340px): the bar of a board admin (it has the extra settings button) has no room left — export stays one tap away in the share dialog */
+@media (max-width: 340px) { .bp-btn-export { display: none; } }
 .bp-members { display: flex; flex-direction: column; gap: 2px; margin: 10px 0 12px; min-height: 28px; }
 .bp-member { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
 .bp-member-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }

@@ -59,7 +59,7 @@ describe('GET /config share', () => {
   it('adds share { origin, lan } and leaves the other /config fields alone', async () => {
     const r = await getConfig();
     assert.equal(r.status, 200);
-    assert.deepEqual(Object.keys(r.json).sort(), ['allowRegister', 'google', 'googleDomains', 'linkPreview', 'maxUploadMb', 'share', 'version']);
+    assert.deepEqual(Object.keys(r.json).sort(), ['allowRegister', 'backup', 'google', 'googleDomains', 'linkPreview', 'maxUploadMb', 'share', 'version']);
     assert.equal(r.json.allowRegister, true);
     assert.equal(r.json.maxUploadMb, 20);
     assert.equal(r.json.linkPreview, true);
@@ -157,7 +157,8 @@ describe('GET /config share', () => {
     const lan = async (headers) => (await getConfig({ headers })).json.share.lan;
     for (const trustProxy of [false, true]) {
       running.app.config.trustProxy = trustProxy;
-      assert.equal((await lan({})).length, 4, `no proxy headers, trustProxy=${trustProxy}: answered`);
+      // TRUST_PROXY=1 is the operator's statement "a proxy sits in front": nobody is then known to sit at the screen (CONTRACT §5)
+      assert.equal((await lan({})).length, trustProxy ? 0 : 4, `no proxy headers, trustProxy=${trustProxy}`);
       const proxied = [
         { 'x-forwarded-for': '203.0.113.9' },
         { 'x-forwarded-for': '127.0.0.1' }, // a "loopback" claim is no proof either
@@ -175,18 +176,30 @@ describe('GET /config share', () => {
         { 'x-azure-clientip': '203.0.113.9' },
         { 'x-original-forwarded-for': '203.0.113.9' },
         { via: '1.1 proxy.example' },
+        { 'client-ip': '203.0.113.9' },
+        { 'x-originating-ip': '203.0.113.9' },
+        { 'fly-client-ip': '203.0.113.9' },
+        { 'x-envoy-external-address': '203.0.113.9' },
+        { 'cf-ray': 'abc' },
+        { 'x-amzn-trace-id': 'Root=1-abc' },
+        { 'x-appengine-user-ip': '203.0.113.9' },
+        { 'x-vercel-forwarded-for': '203.0.113.9' },
+        { 'x-cluster-client-ip': '203.0.113.9' },
         { 'x-forwarded-for': '203.0.113.9', 'x-forwarded-host': `localhost:${p}` },
       ];
       for (const headers of proxied) assert.deepEqual(await lan(headers), [], `trustProxy=${trustProxy} ${JSON.stringify(headers)}`);
     }
   });
 
-  it('condition 4 on its own: the client address is what clientIp() says (TRUST_PROXY reads the last X-Forwarded-For hop)', () => {
-    running.app.config.trustProxy = true;
+  it('condition 4 on its own: the client address is the socket peer — and with TRUST_PROXY nobody is known to sit at the screen', () => {
+    running.app.config.trustProxy = false;
     assert.deepEqual(shareInfo(running.app, fakeReq({ remote: '192.168.0.50' })).lan, []);
     assert.equal(shareInfo(running.app, fakeReq({ remote: '127.0.0.1' })).lan.length, 4);
-    // an intermediary left X-Forwarded-For out and the socket is a LAN device: still no
+    // a LAN device on the socket: still no
     assert.deepEqual(shareInfo(running.app, fakeReq({ remote: '10.0.0.77' })).lan, []);
+    // TRUST_PROXY=1: the peer is the proxy (it may run on this very PC and relay a stranger as 127.0.0.1) — even a loopback peer gets nothing
+    running.app.config.trustProxy = true;
+    for (const remote of ['127.0.0.1', '::1', '192.168.0.50']) assert.deepEqual(shareInfo(running.app, fakeReq({ remote })).lan, [], `trustProxy, peer ${remote}`);
   });
 
   it('a request without a Host header, or without a usable socket port, gets nothing', () => {

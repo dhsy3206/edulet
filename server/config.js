@@ -1,5 +1,9 @@
 // Configuration: environment variables (prefix EDULET_) + programmatic overrides (tests).
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// the repository root, from THIS file's location (not the current folder: unlike DATA_DIR, backups/ must be the same place backup.cmd writes to)
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const FALSE_WORDS = ['0', 'false', 'off', 'no', ''];
 
@@ -39,6 +43,7 @@ export function loadConfig(o = {}) {
     port: o.port ?? Number(get('PORT', 3000)),
     host: o.host ?? get('HOST', '0.0.0.0'),
     dataDir: path.resolve(o.dataDir ?? get('DATA_DIR', './data')),
+    backupDir: path.resolve(o.backupDir ?? get('BACKUP_DIR', path.join(REPO_ROOT, 'backups'))), // "저장하기" writes here, "불러오기" reads here (CONTRACT §1)
     sessionDays: Number(get('SESSION_DAYS', 30)),
     maxUploadMb: Number(get('MAX_UPLOAD_MB', 20)),
     allowRegister: bool(get('ALLOW_REGISTER', '1')),

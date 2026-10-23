@@ -99,8 +99,8 @@ function crashImage(running, label = 'img') {
 const putFile = (c, slug, name, body, type) =>
   c.put(`/api/uploads?board=${slug}&name=${encodeURIComponent(name)}`, body, { raw: true, headers: { 'content-type': type } });
 
-/** What the backup folder must look like: the database, the uploads and the info file — no WAL/journal leftovers. */
-const BACKUP_ENTRIES = ['BACKUP-INFO.txt', 'edulet.db', 'uploads'];
+/** What the backup folder must look like: the database, the uploads, the info file and backup.json (the summary the 불러오기 list reads) — no WAL/journal leftovers. */
+const BACKUP_ENTRIES = ['BACKUP-INFO.txt', 'backup.json', 'edulet.db', 'uploads'];
 
 // ---- the main scenario: the server stays ON ---------------------------------------------------------------------------
 
@@ -142,7 +142,7 @@ describe('backup while the server is running', () => {
 
   it('1. snapshot holds everything that is only in the WAL; copying edulet.db alone does not', async () => {
     const r = await backupData({ dataDir: app.dir, outDir: out });
-    assert.deepEqual(names(r.dir), BACKUP_ENTRIES, 'database + uploads + info, no -wal/-shm/-journal');
+    assert.deepEqual(names(r.dir), BACKUP_ENTRIES, 'database + uploads + info + backup.json, no -wal/-shm/-journal');
     assert.deepEqual(r.counts, liveCounts(app));
     assert.deepEqual(r.counts, { boards: 2, posts: 6, users: 3 });
     assert.equal(r.dbBytes, fs.statSync(path.join(r.dir, 'edulet.db')).size);
@@ -680,6 +680,14 @@ describe('backup CLI (child process)', () => {
     assert.equal(names(out).length, 1);
   });
 
+  it('7b2. no --out: EDULET_BACKUP_DIR is where the backup goes (the folder the server\'s 저장하기 menu uses)', async () => {
+    const out = tmpDir('cli-bkenv');
+    const r = await runCli([], { env: { EDULET_DATA_DIR: img, EDULET_BACKUP_DIR: out }, cwd: tmpDir('cli-cwd2') });
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(names(out).length, 1);
+    assert.deepEqual(names(path.join(out, names(out)[0])), BACKUP_ENTRIES);
+  });
+
   it('7c. failure: exit 1 with a clear Korean message and nothing created', async () => {
     const root = tmpDir('cli-fail');
     const missing = await runCli(['--data', path.join(root, 'nope'), '--out', path.join(root, 'out')]);
@@ -733,7 +741,7 @@ describe('backup CLI (child process)', () => {
   it('defaults do not depend on the current folder (the server uses ./data of the current folder; this tool uses its own location)', async () => {
     const elsewhere = tmpDir('defaults-cwd');
     const code = `import(${JSON.stringify(pathToFileURL(CLI).href)}).then((m) => console.log(JSON.stringify(m.defaultPaths({}))))`;
-    const r = await runNode(['--disable-warning=ExperimentalWarning', '-e', code], { cwd: elsewhere, env: { EDULET_DATA_DIR: '' } });
+    const r = await runNode(['--disable-warning=ExperimentalWarning', '-e', code], { cwd: elsewhere, env: { EDULET_DATA_DIR: '', EDULET_BACKUP_DIR: '' } });
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(JSON.parse(r.stdout), { dataDir: path.join(ROOT, 'data'), outDir: path.join(ROOT, 'backups') });
     assert.notEqual(path.resolve(elsewhere, 'data'), path.join(ROOT, 'data'));
@@ -745,6 +753,10 @@ describe('backup CLI (child process)', () => {
     assert.deepEqual(defaultPaths({}), { dataDir: path.join(root, 'data'), outDir: path.join(root, 'backups') });
     assert.deepEqual(defaultPaths({ EDULET_DATA_DIR: '' }), { dataDir: path.join(root, 'data'), outDir: path.join(root, 'backups') });
     assert.equal(defaultPaths({ EDULET_DATA_DIR: img }).dataDir, path.resolve(img));
+    // the server's EDULET_BACKUP_DIR (where the 저장하기 menu writes) is where the command line writes by default, too
+    assert.equal(defaultPaths({ EDULET_BACKUP_DIR: path.join(img, 'my-backups') }).outDir, path.join(img, 'my-backups'));
+    assert.equal(defaultPaths({ EDULET_BACKUP_DIR: 'relbk' }).outDir, path.resolve('relbk'));
+    assert.equal(defaultPaths({ EDULET_BACKUP_DIR: '' }).outDir, path.join(root, 'backups'));
     assert.equal(defaultPaths({ EDULET_DATA_DIR: 'rel' }).dataDir, path.resolve('rel'), 'relative values are resolved like the server does');
   });
 });
@@ -1069,17 +1081,19 @@ describe('backup.cmd run by cmd.exe', { skip: process.platform !== 'win32' && 'W
   });
   after(async () => { await app.close(); });
 
-  /** A throw-away "install" (Korean + space in the path, like D:\앱개발\edulet): backup.cmd + tools\backup.mjs + a data folder next to them. */
+  /** A throw-away "install" (Korean + space in the path, like a Korean-named drive folder): backup.cmd + tools\backup.mjs (+ the core it imports, server\backup.js) + a data folder next to them. */
   function install(label, { withData = true } = {}) {
     const root = tmpDir(label);
     fs.copyFileSync(path.join(ROOT, 'backup.cmd'), path.join(root, 'backup.cmd'));
     fs.mkdirSync(path.join(root, 'tools'));
     fs.copyFileSync(path.join(ROOT, 'tools', 'backup.mjs'), path.join(root, 'tools', 'backup.mjs'));
+    fs.mkdirSync(path.join(root, 'server')); // the CLI imports ../server/backup.js, which imports ./sqlite.js — and nothing else of ours
+    for (const f of ['backup.js', 'sqlite.js']) fs.copyFileSync(path.join(ROOT, 'server', f), path.join(root, 'server', f));
     if (withData) fs.cpSync(crashImage(app, `${label}-data`), path.join(root, 'data'), { recursive: true });
     return root;
   }
   // `pause` reads stdin: an empty input ends it at once. cwd is somewhere else on purpose (double-click starts in the file's folder, a shortcut may not).
-  const runCmd = (root) => spawnSync('cmd.exe', ['/c', path.join(root, 'backup.cmd')], { cwd: os.tmpdir(), input: '', encoding: 'utf8', env: { ...process.env, EDULET_DATA_DIR: '' } });
+  const runCmd = (root) => spawnSync('cmd.exe', ['/c', path.join(root, 'backup.cmd')], { cwd: os.tmpdir(), input: '', encoding: 'utf8', env: { ...process.env, EDULET_DATA_DIR: '', EDULET_BACKUP_DIR: '' } });
 
   it('complete backup: exit 0, the data folder is found next to the file, backups\\edulet-… is made, the closing line is printed', () => {
     const root = install('cmd-ok');

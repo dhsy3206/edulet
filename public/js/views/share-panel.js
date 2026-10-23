@@ -7,6 +7,8 @@ import { qrMatrix } from '../../vendor/qrcode.js';
 import { LINK_ACCESS, LINK_ACCESS_LABELS, ROLES, ROLE_LABELS } from '../lib/constants.js';
 import { shareInfo } from '../lib/share-origin.js';
 import { store } from '../lib/store.js';
+import { buildBoardHtml, saveBlob, describeResult, exportErrorText, isAbort } from '../lib/export-offline.js';
+import { EXPORT_LIMITS } from '../lib/export-html.js';
 import { boardUrl, reportError, isMember } from './common.js';
 import { requireLogin } from './auth.js';
 import { duplicateBoard } from './board-actions.js';
@@ -270,8 +272,94 @@ function membersSection(ctl) {
 }
 
 /* ───────── section 3: export + duplicate ───────── */
+/** "HTML 파일 (오프라인)": one self-contained .html page made in this browser (lib/export-offline.js). Closing the dialog cancels a running export. */
+function htmlExportBox(slug) {
+  const sizeSel = h('select', { class: 'select', name: 'imageSize', 'aria-label': '그림 크기' },
+    h('option', { value: 'shrink' }, `줄여서 (${EXPORT_LIMITS.imageMax}px, 권장)`),
+    h('option', { value: 'original' }, '원본 크기 (파일이 커져요)'));
+  // what each choice does to the pictures (privacy first): shown under the select and read out with it
+  const NOTES = {
+    shrink: '그림은 위치 정보 등이 빠진 채로 담겨요. 움직이는 그림은 정지된 그림으로 담겨요(GIF 와 ‘원본 크기’ 옵션에서는 그대로 들어가요).',
+    original: '그림이 원본 그대로 들어가요. 위치 정보 등이 그대로 들어가요. 움직이는 그림도 그대로예요.',
+  };
+  const sizeNote = h('p', { class: 'hint', id: 'bp-export-size-note' }, NOTES.shrink);
+  sizeSel.setAttribute('aria-describedby', 'bp-export-size-note');
+  sizeSel.addEventListener('change', () => { sizeNote.textContent = NOTES[sizeSel.value] || NOTES.shrink; });
+  const withFiles = h('input', { type: 'checkbox', name: 'includeFiles', checked: true });
+  const btn = h('button', { type: 'button', class: 'btn btn-secondary', dataset: { role: 'export-html' } }, icon('download', { size: 18 }), 'HTML 파일 (오프라인)');
+  const cancelBtn = h('button', { type: 'button', class: 'btn btn-ghost', hidden: true, dataset: { role: 'export-html-cancel' } }, '취소');
+  const bar = h('progress', { class: 'bp-export-bar', max: 100, hidden: true, 'aria-label': 'HTML 파일을 만드는 진행률' });
+  const status = h('p', { class: 'bp-export-status', role: 'status', 'aria-live': 'polite', dataset: { role: 'export-html-status' } });
+  let abort = null;
+
+  function setBusy(on) {
+    btn.disabled = on;
+    sizeSel.disabled = withFiles.disabled = on;
+    btn.setAttribute('aria-busy', String(on));
+    cancelBtn.hidden = bar.hidden = !on;
+    if (on) bar.removeAttribute('value'); // indeterminate until the first count arrives
+  }
+  async function run() {
+    if (abort) return;
+    abort = new AbortController();
+    status.classList.remove('is-error');
+    status.textContent = '준비하는 중…';
+    setBusy(true);
+    const mine = abort;
+    try {
+      const r = await buildBoardHtml(slug, {
+        imageMax: sizeSel.value === 'original' ? 0 : EXPORT_LIMITS.imageMax,
+        includeFiles: withFiles.checked,
+        signal: mine.signal,
+        onProgress: (p) => {
+          if (abort !== mine) return; // a finished, failed or cancelled run must never repaint the status
+          status.textContent = p.label;
+          if (p.total > 0) bar.value = Math.round((p.done / p.total) * 100);
+        },
+      });
+      saveBlob(r.blob, r.filename);
+      const d = describeResult(r.summary);
+      status.textContent = [`${r.filename} 파일을 내려받았어요.`, d.text, d.skippedText, d.big ? '용량이 커서 메일에는 첨부하기 어려울 수 있어요.' : ''].filter(Boolean).join(' ');
+      toast('HTML 파일을 내려받았어요.', 'success');
+    } catch (e) {
+      if (isAbort(e)) status.textContent = '취소했어요.';
+      else {
+        status.classList.add('is-error');
+        status.textContent = exportErrorText(e); // Korean text only: an engine's English exception is never shown
+      }
+    } finally {
+      const hadFocus = cancelBtn.contains(document.activeElement);
+      abort = null;
+      setBusy(false);
+      if (hadFocus) btn.focus(); // the button that had focus just disappeared
+    }
+  }
+  btn.addEventListener('click', run);
+  cancelBtn.addEventListener('click', () => abort && abort.abort());
+
+  const el = h('div', { class: 'bp-export-html', dataset: { role: 'export-html-box' } },
+    h('strong', null, 'HTML 파일 (오프라인)'),
+    h('p', { class: 'muted' }, '인터넷이 없어도 더블클릭으로 열어 볼 수 있는 파일 하나로 내려받아요. 글·댓글·반응·그림이 모두 들어가요.'),
+    h('label', { class: 'field' }, h('span', { class: 'label' }, '그림 크기'), sizeSel),
+    sizeNote,
+    h('label', { class: 'checkbox' }, withFiles, h('span', null, '첨부 파일(PDF 등)도 담기')),
+    h('div', { class: 'row bp-share-wrap' }, btn, cancelBtn),
+    bar, status,
+    h('p', { class: 'hint' }, '이 파일에는 지금 보이는 글·그림이 모두 담겨요. 관리자가 내보내면 승인 대기 중인 글도 담겨요. 다른 사람에게 보낼 때 주의하세요.'));
+  return {
+    el,
+    destroy() {
+      if (abort) {
+        abort.abort();
+        toast('HTML 파일 만들기를 취소했어요.');
+      }
+    },
+  };
+}
+
 function exportSection(ctl, closeDialog) {
   const slug = ctl.slug;
+  const htmlBox = htmlExportBox(slug);
   const withPosts = h('input', { type: 'checkbox', name: 'withPosts', checked: true });
   const dupBtn = h('button', { type: 'button', class: 'btn btn-primary' }, icon('copy', { size: 18 }), '내 보드로 복제');
   dupBtn.addEventListener('click', async () => {
@@ -303,11 +391,12 @@ function exportSection(ctl, closeDialog) {
     h('h3', null, '내보내기'),
     h('p', { class: 'muted' }, '보드의 글을 파일로 내려받아요. CSV는 엑셀에서 열 수 있어요.'),
     h('div', { class: 'row bp-share-wrap' }, dl('json', 'JSON 파일'), dl('csv', 'CSV 파일 (엑셀)')),
+    htmlBox.el,
     h('h3', { class: 'bp-share-h3-gap' }, '복제'),
     h('p', { class: 'muted' }, '이 보드를 내 보드로 복사해서 이어서 쓸 수 있어요.'),
     h('label', { class: 'checkbox bp-share-check' }, withPosts, h('span', null, '글도 함께 복사')),
     h('div', { class: 'row' }, dupBtn));
-  return { el, destroy() {} };
+  return { el, destroy() { htmlBox.destroy(); } };
 }
 
 /** Open the share dialog. Returns the modal handle ({ close }). opts.section: 'link' | 'members' | 'export'. */

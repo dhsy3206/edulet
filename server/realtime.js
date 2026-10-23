@@ -249,6 +249,20 @@ export class Hub {
     }
   }
 
+  /**
+   * The whole database was replaced (server/restore.js): tell every open stream with a `reset` frame, then close it — the page reloads
+   * and fetches the new snapshot. Unlike closeAll() this keeps the ping timer: the server keeps running.
+   */
+  resetAll() {
+    const frame = this.frame('reset', {});
+    for (const room of [...this.boards.values()]) {
+      for (const conn of [...room.conns]) {
+        this.write(conn, frame);
+        this.close(conn);
+      }
+    }
+  }
+
   closeAll() {
     clearInterval(this.timer);
     for (const room of [...this.boards.values()]) {

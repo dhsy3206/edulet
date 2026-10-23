@@ -33,16 +33,20 @@ export async function createAppOnGoodPort(opts) {
 /** Boot a server on a random port with a throw-away DATA_DIR. close() also removes the folder. */
 export async function startApp(opts = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edulet-test-'));
+  // 저장하기/불러오기 write to backupDir: a test server must never default to the REAL backups/ folder of the repository
+  const backupDir = fs.mkdtempSync(path.join(os.tmpdir(), 'edulet-test-bk-'));
   const running = await createAppOnGoodPort({
-    dataDir: dir, port: 0, host: '127.0.0.1', seed: false, quiet: true, authRateLimit: 100000,
+    dataDir: dir, backupDir, port: 0, host: '127.0.0.1', seed: false, quiet: true, authRateLimit: 100000,
     previewFetcher: stubFetcher, // never touch the real network from tests (pass previewFetcher: null to opt out)
     ...opts,
   });
   const close = running.close.bind(running);
   running.dir = dir;
+  running.backupDir = running.app.config.backupDir; // (opts may have replaced it)
   running.close = async () => {
     await close();
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    fs.rmSync(backupDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   };
   return running;
 }
