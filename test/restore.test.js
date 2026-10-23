@@ -285,6 +285,21 @@ describe('저장하기·불러오기: the gate', () => {
     } finally { await fresh.close(); }
   });
 
+  it('a new PC with the DEFAULT practice board is not account-free: the seeded owner counts, so a teacher signs up first (docs/server-mode.html §4 says so)', async () => {
+    // every other test starts with seed:false; the real first start of a real new PC plants the practice board whose owner is a non-guest without a login
+    const fresh = await startApp({ seed: 'auto' });
+    try {
+      assert.ok(fresh.db.get('SELECT 1 AS x FROM boards'), 'the practice board was planted');
+      const anon = new Client(fresh);
+      const r = await anon.get('/api/backups');
+      assert.equal(r.status, 403);
+      assert.equal(r.json.error.code, 'member_required');
+      const reg = await anon.post('/api/auth/register', { username: 'teacher', password: 'password-123' });
+      assert.equal(reg.status, 201, reg.text);
+      assert.equal((await anon.get('/api/backups')).status, 200, 'signed up and signed in: the list opens');
+    } finally { await fresh.close(); }
+  });
+
   it('a POST must come from the same origin (the existing check still applies)', async () => {
     const before = names(s.app.backupDir);
     for (const [url, body] of [['/api/backups', {}], [`/api/backups/${bk}/restore`, { confirm: true }]]) {

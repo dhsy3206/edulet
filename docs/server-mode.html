@@ -3,18 +3,22 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Edulet 서버 모드 사용법 — 유선·무선</title>
+<title>Edulet 서버 모드 사용법 — 유선·무선·저장·내보내기</title>
 <style>
   :root { --bg:#f6f8f7; --card:#fff; --ink:#17231e; --muted:#5b6b64; --line:#dbe3df; --brand:#0f7a4f; --brand-soft:#e3f4ec; --warn:#8a4b00; --warn-bg:#fff4e0; --warn-line:#f0d29b; --code:#eef2f0; }
   @media (prefers-color-scheme: dark) { :root { --bg:#101614; --card:#18211e; --ink:#e8efec; --muted:#9bb0a7; --line:#2b3934; --brand:#3ec58a; --brand-soft:#173126; --warn:#ffd08a; --warn-bg:#33270f; --warn-line:#5b4519; --code:#222d29; } }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.65 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.65 "Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif; word-break:keep-all; overflow-wrap:break-word; }
   main { max-width:860px; margin:0 auto; padding:28px 16px 56px; }
   h1 { font-size:1.65rem; margin:0 0 4px; }
   h2 { font-size:1.2rem; margin:34px 0 10px; padding-bottom:6px; border-bottom:2px solid var(--line); }
   p { margin:8px 0; }
+  a { color:var(--brand); }
   .lead { color:var(--muted); margin-bottom:18px; }
-  code, kbd { background:var(--code); border-radius:5px; padding:1px 6px; font:0.92em/1.4 Consolas,"D2Coding",monospace; }
+  .hint { color:var(--muted); font-size:0.93rem; margin:4px 0 0; }
+  .toc { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 6px; padding:0; list-style:none; }
+  .toc a { display:inline-block; padding:8px 14px; border:1px solid var(--line); border-radius:99px; background:var(--card); text-decoration:none; font-size:0.93rem; }
+  code, kbd { background:var(--code); border-radius:5px; padding:1px 6px; font:0.92em/1.4 Consolas,"D2Coding",monospace; overflow-wrap:anywhere; }
   .steps { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); counter-reset:s; padding:0; list-style:none; margin:14px 0; }
   .steps li { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 14px 14px 52px; position:relative; counter-increment:s; }
   .steps li::before { content:counter(s); position:absolute; left:14px; top:14px; width:28px; height:28px; border-radius:50%; background:var(--brand); color:#fff; font-weight:700; display:grid; place-items:center; }
@@ -28,6 +32,7 @@
   .box.ip h3 { color:var(--warn); }
   .box h3 { margin:0 0 6px; font-size:1.05rem; }
   .box ul, .box ol { margin:6px 0 2px; padding-left:22px; }
+  .box li { margin:3px 0; }
   .tag { display:inline-block; font-size:0.78rem; font-weight:700; padding:1px 8px; border-radius:99px; background:var(--brand-soft); color:var(--brand); margin-right:4px; white-space:nowrap; }
   td:first-child { min-width:7.5em; }
   details { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 14px; margin:10px 0; }
@@ -40,13 +45,20 @@
 <body>
 <main>
   <h1>Edulet 서버 모드 사용법</h1>
-  <p class="lead">같은 교실의 PC·휴대폰이 <b>로그인 없이 링크나 QR 로</b> 한 보드를 동시에 쓰는 방법입니다. 유선·무선 모두 되고, 와이파이 주소(IP)가 바뀌는 경우도 다룹니다.</p>
+  <p class="lead">같은 교실의 PC·휴대폰이 <b>로그인 없이 링크나 QR 로</b> 한 보드를 동시에 쓰는 방법입니다. 유선·무선 모두 되고, 와이파이 주소(IP)가 바뀌는 경우도 다룹니다. 수업 내용을 <b>저장해 두고 되돌리는 법</b>, 보드를 <b>인터넷 없이 볼 수 있는 파일</b>로 내려받는 법도 있어요.</p>
+  <ul class="toc" aria-label="바로 찾기">
+    <li><a href="#start">시작하기</a></li>
+    <li><a href="#trouble">안 열릴 때</a></li>
+    <li><a href="#save">수업 내용 저장 · 되돌리기</a></li>
+    <li><a href="#export">파일로 받아 두기</a></li>
+  </ul>
+  <p class="hint">예전 상태로 <b>되돌리고 싶다</b> → 4번 · 보드를 <b>파일로 받아 두고 인터넷 없이 보고 싶다</b> → 5번 (되돌리기용은 아니에요)</p>
 
-  <h2>1. 세 단계로 시작</h2>
+  <h2 id="start">1. 세 단계로 시작</h2>
   <ol class="steps">
-    <li><b>서버 켜기</b>보드를 열어 둘 PC 에서 <code>run.cmd</code> 를 더블클릭(또는 <code>npm start</code>). 검은 서버 창은 수업이 끝날 때까지 닫지 마세요.</li>
-    <li><b>보드 만들고 공유</b>교사 PC 브라우저에서 <code>http://localhost:3000</code> 을 열고(처음이면 교사 계정을 가입) 보드를 만든 뒤 <b>공유</b>를 누르면, 링크와 QR 이 <b>다른 기기가 열 수 있는 주소</b>로 나옵니다.</li>
-    <li><b>학생 입장(로그인 없음)</b>같은 와이파이의 휴대폰은 QR 스캔, PC 는 링크 열기. 이름 입력 창에서 <b>“이름 없이 바로 참여”</b> 한 번이면 끝. 글·댓글이 모두의 화면에 바로 나타나요.</li>
+    <li><b>서버 켜기</b> 보드를 열어 둘 PC 에서 <code>run.cmd</code> 를 더블클릭(또는 <code>npm start</code>). 검은 서버 창은 수업이 끝날 때까지 닫지 마세요.</li>
+    <li><b>보드 만들고 공유</b> 교사 PC 브라우저에서 <code>http://localhost:3000</code> 을 열고(처음이면 교사 계정을 가입) 보드를 만든 뒤 <b>공유</b>를 누르면, 링크와 QR 이 <b>다른 기기가 열 수 있는 주소</b>로 나옵니다.</li>
+    <li><b>학생 입장(로그인 없음)</b> 같은 와이파이의 휴대폰은 QR 스캔, PC 는 링크 열기. 이름 입력 창에서 <b>“이름 없이 바로 참여”</b> 한 번이면 끝. 글·댓글이 모두의 화면에 바로 나타나요.</li>
   </ol>
   <p>필요한 것: Node.js 22.13 이상, 서버 PC 와 학생 기기가 <b>같은 공유기(같은 와이파이/유선망)</b>. 처음 켤 때 뜨는 <b>Windows 방화벽</b> 창에서 <b>개인 네트워크</b>를 체크하고 <b>액세스 허용</b>을 누르세요(안 누르면 다른 기기가 못 들어옵니다).</p>
 
@@ -69,7 +81,7 @@
     <p>주소를 직접 보려면 서버 PC 의 명령 프롬프트에서 <code>ipconfig</code> → <b>Wi-Fi</b> 또는 <b>이더넷</b> 항목의 <b>IPv4 주소</b>. 학생 기기에서 <code>http://그주소:3000</code> 으로 열어도 같습니다.</p>
   </div>
 
-  <h2>3. 안 열릴 때</h2>
+  <h2 id="trouble">3. 안 열릴 때</h2>
   <table>
     <tr><th>이런 일이…</th><th>이렇게 확인</th></tr>
     <tr><td>다른 기기만 안 열려요</td><td>Windows 방화벽 허용 — 보안 → 방화벽 및 네트워크 보호 → “방화벽을 통해 앱 허용” → <b>Node.js JavaScript Runtime</b> 의 <b>개인</b> 체크.</td></tr>
@@ -78,61 +90,130 @@
     <tr><td>공유 창에 “이 PC 에서만 열려요”</td><td>이 PC 의 네트워크 주소를 못 찾은 것(네트워크 미연결, <code>EDULET_HOST=127.0.0.1</code>, Docker). 네트워크에 연결하고 다시 열기.</td></tr>
     <tr><td>수업 중 모두 끊겼어요</td><td>서버 창이 닫혔거나 PC 가 절전에 들어간 것. <code>run.cmd</code> 를 다시 켜고(데이터는 그대로), 설정 → 전원에서 수업 중 절전 안 함.</td></tr>
     <tr><td>보드가 비어 있어요</td><td>GitHub Pages <b>데모</b> 주소로 열었을 가능성. 데모는 그 브라우저 안에서만 동작해 다른 기기와 공유되지 않습니다. 서버 모드 주소(<code>http://…:3000</code>)로 여세요.</td></tr>
-    <tr><td>껐다 켰더니 작업이 사라졌어요</td><td>다른 폴더에서 켜서 새 빈 <code>data</code> 가 생긴 경우가 많아요 → 아래 <b>4번</b>의 “켰더니 보드가 사라졌어요”. 원래 데이터는 그대로 있습니다.</td></tr>
+    <tr><td>껐다 켰더니 보드가 사라졌어요(빈 화면)</td><td>다른 폴더에서 켜서 새 빈 <code>data</code> 가 생긴 경우가 많아요 → <b><a href="#data-lost">아래 “켰더니 보드가 사라졌어요”</a></b>. 원래 데이터는 그대로 있습니다.</td></tr>
+    <tr><td>저장하기·불러오기 메뉴가 안 보여요</td><td>서버 PC 에서 <code>http://localhost:3000</code> 으로 열었는지 확인하세요 → <a href="#save-hidden">아래 설명</a>.</td></tr>
   </table>
 
-  <h2>4. 껐다 켠 뒤 이어서 쓰기 · 백업</h2>
-  <p>서버 창을 닫거나 PC 를 꺼도 보드·글·사진·계정은 <b><code>run.cmd</code> 가 있는 폴더의 <code>data</code></b> 에 이미 저장돼 있습니다. 다시 켜면 그대로 이어집니다.</p>
+  <h2 id="save">4. 수업 내용 저장하기 · 불러오기 (백업과 되돌리기)</h2>
+  <p>평소 작업(보드·글·사진·계정)은 알아서 보관돼요. 서버 창을 닫거나 PC 를 꺼도 <code>run.cmd</code> 가 들어 있는 폴더(이하 <b>프로그램 폴더</b>) 안의 <code>data</code> 폴더에 그대로 남아, 다시 켜면 이어집니다. 다만 이 사본은 <b>이 PC 안에만</b> 있어서 PC 가 고장 나거나 폴더를 지우면 함께 사라져요. 그래서 <b>저장하기</b>로 별도의 사본(<b>저장본</b>)을 만들어 두면 안심이에요.</p>
   <table>
     <tr><th>하고 싶은 일</th><th>방법</th></tr>
     <tr><td>다시 켜기</td><td><code>run.cmd</code> 를 더블클릭. 보드·글·사진·교사 계정이 그대로이고, 교사 로그인은 30일 동안 유지됩니다.</td></tr>
-    <tr><td>학생 다시 입장</td><td>와이파이 주소가 바뀌었을 수 있어요 → 교사 PC 에서 <b>공유 창을 다시 열어 새 QR</b>. 보드 이름(<code>/b/…</code>)은 그대로입니다.</td></tr>
-    <tr><td>백업 <span class="tag">화면에서</span></td><td>서버 PC 에서 <code>http://localhost:3000</code> 으로 열고 위쪽 막대의 <b>저장하기</b> → <b>[지금 저장]</b>. <b>서버를 켠 채로, 수업 중에도</b> 됩니다. 끝나면 저장한 때·보드/글/사용자/사진 개수·폴더 이름이 나오고, 알아 둘 점(경고)이 있으면 눈에 띄게 보여 줍니다. 저장본은 프로그램 폴더의 <code>backups\edulet-날짜-시간</code> 에 생겨요. 이 폴더를 USB·클라우드에 복사해 두면 다른 PC 로 옮길 수도 있습니다.</td></tr>
-    <tr><td>복원 <span class="tag">화면에서</span></td><td>같은 화면(<code>localhost</code>)의 <b>불러오기</b> → 저장본 목록(최신 순)에서 하나를 누르면 <b>미리보기</b>(보드 목록, 지금과 달라지는 개수)가 나오고, <b>확인</b>을 거쳐 불러옵니다. <b>불러오기 직전에 지금 데이터를 ‘자동 저장’으로 먼저 저장</b>해 두므로 잘못 불러와도 목록에서 그 ‘자동 저장’을 골라 되돌릴 수 있어요. 불러온 뒤 화면이 새로고침되고 접속 중인 다른 기기의 화면도 새로고침됩니다. <b>계정·비밀번호도 저장 당시로 돌아가니</b> 저장본에 있던 계정으로 다시 로그인해야 할 수 있어요. 데이터가 많으면 저장·불러오기에 몇 초 걸리고 그동안 서버가 잠시 느려질 수 있습니다. <b>새 PC 로 옮길 때</b>는 옛 PC 의 <code>backups\edulet-…</code> 폴더를 새 PC 의 <code>backups</code> 안에 복사하면 목록에 나타납니다(계정이 아직 하나도 없는 새 PC 에서는 로그인 없이 불러올 수 있어요).</td></tr>
-    <tr><td>메뉴가 안 보여요</td><td>저장하기·불러오기는 <b>서버를 켠 PC 에서 <code>localhost</code> 주소로 연 화면에서만</b> 보입니다. 다른 PC·휴대폰, <code>192.168.…</code> 같은 네트워크 주소로 연 화면, 터널·프록시(ngrok·Cloudflare Tunnel 등)를 거친 접속, 공개 주소(<code>EDULET_PUBLIC_URL</code>)를 설정한 서버는 <b>안 보이는 것이 정상</b>이에요(데모 사이트도 마찬가지). 그럴 땐 아래 <code>backup.cmd</code> 와 손으로 복원하기를 쓰세요. 로그인한 계정이 있는 서버에서는 <b>계정으로 로그인한 뒤에</b> 쓸 수 있어요. <b>학생과 같이 쓰는 공용 PC</b> 에서는 그 PC 에서 가입한 누구나 저장·불러오기를 할 수 있으니 새 가입을 막는 <code>EDULET_ALLOW_REGISTER=0</code> 을 권장합니다. 저장본에는 비밀번호 해시·로그인 정보·모든 글이 들어 있으니 남에게 보내거나 올리지 마세요.</td></tr>
-    <tr><td>백업 <span class="tag">화면을 쓸 수 없을 때</span></td><td><b><code>backup.cmd</code> 를 더블클릭</b> — <b>서버를 켠 채로 해도 됩니다</b>(수업 중에도 안전해요). 프로그램 폴더 안에 <code>backups\edulet-날짜-시간</code> 폴더가 새로 생기고, 그 폴더를 USB·클라우드에 복사해 두면 됩니다. 원본 <code>data</code> 는 읽기만 하고 바꾸지 않아요. 폴더 안 <code>BACKUP-INFO.txt</code> 에 보드·글·사진 개수와 복원 방법이 적혀 있습니다. 끝나면 <b>“가장 최근 글” 시각</b>이 방금까지의 작업과 맞는지 한 번 봐 주세요. (서버 창을 <b>닫은 뒤</b> <code>data</code> 폴더 <b>전체</b>를 복사해도 같은 효과예요.)<br>
-      <b>결과 읽는 법</b>: 마지막에 <code>Backup FAILED</code> 면 <b>실패</b>(만들던 폴더는 지워지고 원본은 그대로) · <code>Backup finished WITH WARNINGS</code> 면 백업은 만들어졌지만 <b>일부 파일이 빠졌을 수 있어요</b>(위쪽 “경고” 줄을 읽어 보세요) · 경고 없이 끝나면 완전한 백업입니다. 프로그램으로 부르는 경우 종료 코드는 <b>0 = 완전 · 1 = 실패 · 2 = 경고 있음</b>.<br>
-      <b>이름 끝에 <code>.partial</code> 이 붙은 폴더</b>(<code>edulet-….partial</code>)는 백업이 중간에 끊긴 것(창을 닫거나 전원이 나간 경우)이니 <b>쓰지 말고 지워도 됩니다</b>. 정상 이름의 폴더는 끝까지 만들어 확인을 마친 것만 있어요.</td></tr>
-    <tr><td>복원 · 다른 PC 로 옮기기 <span class="tag">화면을 쓸 수 없을 때</span></td><td>아래 <b>복원 방법</b>대로 백업 폴더의 <code>edulet.db</code> 와 <code>uploads</code> 를 새 <code>data</code> 폴더에 넣고 <code>run.cmd</code>. 프로그램과 <code>data</code> 폴더를 통째로 옮겨도 됩니다(Node.js 가 있는 PC). 데이터를 다른 위치에 두려면 환경변수 <code>EDULET_DATA_DIR</code> 로 폴더를 지정하세요.</td></tr>
-    <tr><td>보드별 기록 남기기</td><td>공유 창 → <b>내보내기·복제</b> → JSON·CSV 로 내려받기(읽기·엑셀용, <b>다시 불러오기는 안 돼요</b> — 복원은 <code>data</code> 폴더로). 같은 서버 안에서 보드를 통째로 복사하는 것은 <b>복제</b>입니다.</td></tr>
+    <tr><td>학생 다시 입장</td><td>와이파이 주소가 바뀌었을 수 있어요 → 교사 PC 에서 <b>공유 창을 다시 열어 새 QR</b>. 보드 주소 끝부분(<code>/b/…</code>)은 그대로입니다.</td></tr>
   </table>
-  <div class="box ip">
-    <h3>⚠ 서버가 켜져 있을 때 <code>edulet.db</code> 만 복사하면 비어 있거나 낡은 백업이 됩니다</h3>
-    <p>서버가 켜진 동안 <code>edulet.db</code> 는 <b>낡은 값</b>입니다(비어 있거나 최근 작업이 빠진 파일). 방금까지의 작업은 <code>edulet.db-wal</code> 에 쌓여 있고, <code>edulet.db</code> 만 복사하면 그 작업이 <b>빠진 백업</b>이 됩니다. 폴더 <b>통째로(서버를 끈 뒤)</b> 복사하거나, <b><code>backup.cmd</code></b> 를 쓰세요.</p>
+
+  <div class="box">
+    <h3>저장하기 — 지금 상태를 저장본으로 남겨 두기 (백업)</h3>
+    <p>수업이 끝난 날, 시험·행사 전, PC 를 바꾸기 전에 한 번 해 두면 마음이 편해요. <b>서버를 켠 채로, 수업 중에도</b> 됩니다.</p>
+    <ol>
+      <li>서버를 켠 <b>그 PC</b> 의 브라우저 주소창에 <code>http://localhost:3000</code> 을 입력해 엽니다(‘이 컴퓨터 자신’이라는 뜻이에요).</li>
+      <li>위쪽의 <b>저장하기</b> 를 누르고 <b>지금 저장</b> 을 누릅니다. 계정이 있는 서버라면 로그인 창이 뜨니 교사 계정으로 로그인하세요. (보드 화면 안에서는 로그인한 내 이름을 눌러 나오는 메뉴에도 있어요. 메뉴가 안 보이면 아래 “메뉴가 안 보여요”.)</li>
+      <li>저장한 시각과 보드·글·사진 개수가 나오면 성공입니다. ‘알려 드릴 점’이 함께 나오면 한 번 읽어 보세요.</li>
+    </ol>
+    <p>저장본은 프로그램 폴더 안의 <b><code>backups</code> 폴더</b>에 <code>edulet-날짜-시간</code> 이름으로 생깁니다. 그 폴더를 USB 나 <b>나만 쓰는 클라우드 폴더(공유를 끈 것)</b>에 복사해 두면 PC 가 고장 나도 안전하고, 다른 PC 로 옮길 수도 있어요.</p>
     <ul>
-      <li><code>backup.cmd</code> 는 이 프로그램 폴더의 <code>data</code> 를 백업합니다. <b>서버를 켤 때 <code>EDULET_DATA_DIR</code> 를 썼다면 <code>backup.cmd</code> 를 실행하는 창에도 같은 환경변수가 필요해요</b>(<code>setx</code> 로 고정했다면 둘 다 자동). 그렇지 않으면 이 폴더에 남아 있는 <b>옛 <code>data</code></b> 를 “성공”으로 백업합니다 — 서버를 <b>다른 폴더에서 켠</b> 경우도 같아요. 이럴 땐 <code>backup.cmd --data "그폴더\data"</code> 로 알려 주세요.</li>
-      <li>그래서 백업이 끝나면 <b>원본 폴더 · 가장 최근 글 시각 · 원본 WAL 마지막 수정 시각</b>을 보여 줍니다. 방금 쓴 글의 시각과 다르거나 “글이 하나도 없어요” 경고가 나오면 <b>엉뚱한 <code>data</code></b> 를 백업한 것이니 위처럼 폴더를 지정해 다시 하세요. 그 <code>data</code> 가 없으면 “data 폴더를 찾을 수 없어요”라고 알려 주고 아무것도 만들지 않습니다.</li>
-      <li>사진·파일이 든 <code>uploads</code> 폴더를 다른 드라이브로 옮겨 바로가기(링크)로 연결했어도 그대로 따라가서 백업하고, 그렇다고 알려 줍니다(경고로 취급 — 종료 코드 2). 업로드 파일 <b>하나</b>가 바로가기이거나 다른 프로그램이 잠그고 있으면 그 파일만 건너뛰고 알려 줍니다.</li>
-      <li>아직 <b>“게시하기”를 누르지 않은 작성 중인 글</b>은 그 브라우저 메모리에만 있어서 서버에도, 백업에도 담기지 않아요.</li>
+      <li>저장본에는 학생 이름·글·계정 정보가 모두 들어 있어요. 다른 사람에게 보내거나 공개된 곳에 올리지 마세요.</li>
+      <li>저장본은 저절로 지워지지 않고 쌓여요(불러오기 직전의 ‘자동 저장’도 마찬가지예요). 오래된 것은 <code>backups</code> 안의 <code>edulet-…</code> 폴더만 지우세요. <b><code>data</code> 폴더는 절대 지우지 마세요.</b></li>
+      <li>아직 <b>“게시하기”를 누르지 않은 작성 중인 글</b>은 그 브라우저에만 있어서 저장본에 담기지 않아요.</li>
     </ul>
   </div>
+
   <div class="box">
-    <h3>복원 방법 — 손으로 <small style="font-weight:400">(화면의 <b>불러오기</b>를 쓸 수 없을 때. <code>BACKUP-INFO.txt</code> 에도 같은 내용이 있어요)</small></h3>
-    <p><b><code>BACKUP-INFO.txt</code> 가 있는 정상 이름(<code>edulet-날짜-시간</code>)의 폴더만 쓰세요.</b> 이름 끝에 <code>.partial</code> 이 붙은 폴더는 중간에 끊긴 것이니 쓰지 말고 지워도 됩니다.</p>
+    <h3>불러오기 — 저장해 둔 것 중 하나로 되돌리기</h3>
+    <p>불러오기는 <b>지금의 보드·글을 고른 저장본의 모습으로 통째로 바꾸는</b> 일이에요. <b>수업 중이 아닐 때</b> 하세요(접속 중인 학생들의 화면도 새로고침돼서, 아직 게시하지 않고 쓰던 글은 사라져요).</p>
     <ol>
-      <li>서버를 끕니다(서버 창을 닫기).</li>
-      <li>지금의 <code>data</code> 폴더를 따로 옮겨 둡니다(지우지 말고 이름만 바꾸거나 다른 곳으로).</li>
-      <li>새 <code>data</code> 폴더를 만들고, 백업 폴더의 <code>edulet.db</code> 와 <code>uploads</code> 폴더를 그 안에 복사합니다.</li>
-      <li>새 <code>data</code> 폴더에 옛 <code>edulet.db-wal</code> · <code>edulet.db-shm</code> 파일이 있으면 <b>반드시 지웁니다</b>. (남아 있으면 다른 데이터베이스의 WAL 이 복원본에 다시 적용돼 데이터가 망가질 수 있어요.)</li>
-      <li><code>run.cmd</code> 로 서버를 켭니다. 다른 위치의 <code>data</code> 폴더를 쓰려면 환경변수 <code>EDULET_DATA_DIR</code> 로 그 폴더를 지정하세요.</li>
+      <li>같은 화면(<code>localhost</code>)에서 위쪽의 <b>불러오기</b> 를 누르면 저장본 목록이 <b>최신 순</b>으로 나옵니다. <span class="tag">직접 저장</span> 은 내가 저장하기로 만든 것, <span class="tag">자동 저장</span> 은 불러오기 직전에 프로그램이 대신 만들어 둔 것이에요.</li>
+      <li>하나를 누르면 <b>미리보기</b>(어떤 보드가 있는지, 지금과 비교해 글이 몇 개 달라지는지)가 나옵니다.</li>
+      <li><b>이 저장본으로 불러오기…</b> 를 누르고, 안내를 읽은 뒤 확인 창에서 같은 이름의 단추를 한 번 더 누르면 시작돼요.</li>
+      <li>끝나면 화면이 새로고침돼요. 저장했을 때의 보드와 글이 보이면 성공입니다.</li>
     </ol>
+    <p><b>잘못 불러왔어도 괜찮아요.</b> 불러오기 직전의 지금 데이터를 <b>자동 저장</b>으로 먼저 남겨 두기 때문에, 같은 방법으로 목록에서 그 ‘자동 저장’을 고르면 원래대로 돌아옵니다. 불러오기가 도중에 실패하면 지금 데이터는 바뀌지 않고 그대로 남아요.</p>
+    <p><b>알아 두세요</b></p>
+    <ul>
+      <li>저장본을 만든 <b>뒤에</b> 새로 쓰거나 고친 글은 불러오면 사라져요(그래서 ‘자동 저장’이 따로 남습니다).</li>
+      <li><b>계정·비밀번호도 저장했을 때로 돌아가요.</b> 저장 뒤에 가입한 계정은 없어지고, 로그인이 풀리면 저장본에 있던 계정으로 다시 로그인하세요.</li>
+      <li>데이터가 많으면 몇 초 걸리고, 그동안 서버가 잠시 느려질 수 있어요.</li>
+    </ul>
+    <p><b>다른 PC 로 옮기려면</b> 옛 PC 의 <code>backups</code> 안에 있는 <code>edulet-…</code> 폴더를 새 PC 의 <code>backups</code> 폴더에 복사하세요(<code>backups</code> 폴더가 없으면 새로 만드세요). 그러면 새 PC 의 불러오기 목록에 나타납니다. 새 PC 에서는 <b>처음 한 번 교사 계정을 가입해 로그인</b>해야 불러오기를 쓸 수 있어요. 불러오고 나면 그 임시 계정은 없어지니, 저장본에 있던 계정으로 다시 로그인하세요.</p>
   </div>
-  <div class="box ip">
+
+  <div class="box" id="save-hidden">
+    <h3>저장하기·불러오기 메뉴가 안 보여요</h3>
+    <p><b>저장하기·불러오기는 서버 PC 에서 <code>http://localhost:3000</code> 으로 연 화면에서만 보여요.</b> 학생이 실수로 건드리지 못하게 일부러 막아 둔 것이라, 아래 경우에는 <b>안 보이는 것이 정상</b>이에요.</p>
+    <ul>
+      <li>학생들의 휴대폰·다른 PC 에서 연 화면</li>
+      <li>서버 PC 에서도 공유 링크(<code>192.168.…</code> 같은 숫자 주소)로 연 화면 → 주소창을 <code>http://localhost:3000</code> 으로 바꿔 보세요.</li>
+      <li>GitHub Pages 데모 사이트(서버 모드가 아니에요)</li>
+    </ul>
+    <p>그래도 안 되면 프로그램 폴더의 <b><code>backup.cmd</code> 를 더블클릭</b>하세요(아래 ‘고급’). 서버 PC 를 <b>학생과 같이 쓴다면</b> 그 PC 에서 가입한 누구나 저장·불러오기를 할 수 있으니 새 가입을 막아 두세요(방법은 아래 ‘고급’).</p>
+  </div>
+
+  <div class="box ip" id="data-lost">
     <h3>⚠ 켰더니 보드가 사라졌어요 (빈 화면)</h3>
     <p>데이터는 <b>서버를 시작한 폴더</b> 기준의 <code>data</code> 에 만들어집니다. <code>run.cmd</code> 는 항상 자기 폴더에서 시작하도록 고쳐져 있지만, <code>node server\index.js</code> 를 다른 폴더에서 직접 켜거나 <b>예전 판 <code>run.cmd</code></b> 를 바로가기·작업 표시줄·작업 스케줄러로 켰다면 그 폴더에 <b>새 빈 <code>data</code></b> 가 생겼을 수 있습니다. 원래 <code>data</code> 는 지워지지 않고 그대로 있어요.</p>
     <ol>
       <li>서버 창을 닫습니다.</li>
       <li>원래 데이터는 <code>run.cmd</code> 가 있는 <b>프로그램 폴더 안의 <code>data</code></b> 입니다. 그 폴더의 <code>run.cmd</code> 를 <b>더블클릭해 다시 켜면</b> 그대로 돌아옵니다.</li>
-      <li>엉뚱한 위치에 새로 생긴 빈 <code>data</code> 폴더는 필요 없으니 지워도 됩니다.</li>
+      <li>엉뚱한 위치에 새로 생긴 빈 <code>data</code> 폴더는 그냥 두어도 됩니다(헷갈리면 지우지 마세요).</li>
     </ol>
-    <p><b>아예 고정하기</b> — 명령 프롬프트에서 한 번만 실행하면 이후 어떻게 켜도 항상 그 폴더를 씁니다(실행 뒤에는 <code>run.cmd</code> 를 새로 켜세요. 적용이 안 되면 PC 를 한 번 다시 시작):</p>
+    <p><b>아예 고정하기</b> (고급 — 잘 모르면 건너뛰어도 돼요) — 명령 프롬프트에서 한 번만 실행하면 이후 어떻게 켜도 항상 그 폴더를 씁니다(실행 뒤에는 <code>run.cmd</code> 를 새로 켜세요. 적용이 안 되면 PC 를 한 번 다시 시작):</p>
     <pre>setx EDULET_DATA_DIR "D:\EduletData"</pre>
   </div>
 
-  <h2>5. 알아 두기</h2>
+  <details>
+    <summary>고급 — 화면을 쓸 수 없을 때 <code>backup.cmd</code> 로 저장 · 손으로 복원 · 새 가입 막기</summary>
+    <table>
+      <tr><th>하고 싶은 일</th><th>방법</th></tr>
+      <tr><td>백업 <span class="tag">화면을 쓸 수 없을 때</span></td><td><b><code>backup.cmd</code> 를 더블클릭</b> — <b>서버를 켠 채로 해도 됩니다</b>(수업 중에도 안전해요). 프로그램 폴더 안에 <code>backups\edulet-날짜-시간</code> 폴더가 새로 생기고, 그 폴더를 USB·클라우드에 복사해 두면 됩니다. 원본 <code>data</code> 는 읽기만 하고 바꾸지 않아요. 폴더 안 <code>BACKUP-INFO.txt</code> 에 보드·글·사진 개수와 복원 방법이 적혀 있습니다. 끝나면 <b>“가장 최근 글” 시각</b>이 방금까지의 작업과 맞는지 한 번 봐 주세요. (서버 창을 <b>닫은 뒤</b> <code>data</code> 폴더 <b>전체</b>를 복사해도 같은 효과예요.)<br>
+        <b>결과 읽는 법</b>: 마지막에 <code>Backup FAILED</code> 면 <b>실패</b>(만들던 폴더는 지워지고 원본은 그대로) · <code>Backup finished WITH WARNINGS</code> 면 백업은 만들어졌지만 <b>일부 파일이 빠졌을 수 있어요</b>(위쪽 “경고” 줄을 읽어 보세요) · 경고 없이 끝나면 완전한 백업입니다. 프로그램으로 부르는 경우 종료 코드는 <b>0 = 완전 · 1 = 실패 · 2 = 경고 있음</b>.<br>
+        <b>이름 끝에 <code>.partial</code> 이 붙은 폴더</b>(<code>edulet-….partial</code>)는 백업이 중간에 끊긴 것(창을 닫거나 전원이 나간 경우)이니 <b>쓰지 말고 지워도 됩니다</b>. 정상 이름의 폴더는 끝까지 만들어 확인을 마친 것만 있어요.</td></tr>
+      <tr><td>복원 · 다른 PC 로 옮기기 <span class="tag">화면을 쓸 수 없을 때</span></td><td>아래 <b>복원 방법</b>대로 백업 폴더의 <code>edulet.db</code> 와 <code>uploads</code> 를 새 <code>data</code> 폴더에 넣고 <code>run.cmd</code>. 프로그램과 <code>data</code> 폴더를 통째로 옮겨도 됩니다(Node.js 가 있는 PC). 데이터를 다른 위치에 두려면 환경변수 <code>EDULET_DATA_DIR</code> 로 폴더를 지정하세요.</td></tr>
+      <tr><td>새 가입 막기 <span class="tag">학생과 같이 쓰는 서버 PC</span></td><td><b>교사 계정을 먼저 가입해 둔 뒤에</b>, 명령 프롬프트에서 <code>setx EDULET_ALLOW_REGISTER 0</code> 을 한 번 실행하고 <code>run.cmd</code> 로 서버를 다시 켜세요. 이미 있는 계정은 그대로 쓰고, 새 가입은 (교사 가입도) 막혀요. (되돌리려면 <code>setx EDULET_ALLOW_REGISTER 1</code>)</td></tr>
+    </table>
+    <div class="box ip">
+      <h3>⚠ 서버가 켜져 있을 때 <code>edulet.db</code> 만 복사하면 비어 있거나 낡은 백업이 됩니다</h3>
+      <p>서버가 켜진 동안 <code>edulet.db</code> 는 <b>낡은 값</b>입니다(비어 있거나 최근 작업이 빠진 파일). 방금까지의 작업은 <code>edulet.db-wal</code> 에 쌓여 있고, <code>edulet.db</code> 만 복사하면 그 작업이 <b>빠진 백업</b>이 됩니다. 폴더 <b>통째로(서버를 끈 뒤)</b> 복사하거나, <b><code>backup.cmd</code></b> 를 쓰세요.</p>
+      <ul>
+        <li><code>backup.cmd</code> 는 이 프로그램 폴더의 <code>data</code> 를 백업합니다. <b>서버를 켤 때 <code>EDULET_DATA_DIR</code> 를 썼다면 <code>backup.cmd</code> 를 실행하는 창에도 같은 환경변수가 필요해요</b>(<code>setx</code> 로 고정했다면 둘 다 자동). 그렇지 않으면 이 폴더에 남아 있는 <b>옛 <code>data</code></b> 를 “성공”으로 백업합니다 — 서버를 <b>다른 폴더에서 켠</b> 경우도 같아요. 이럴 땐 <code>backup.cmd --data "그폴더\data"</code> 로 알려 주세요.</li>
+        <li>그래서 백업이 끝나면 <b>원본 폴더 · 가장 최근 글 시각 · 원본 WAL 마지막 수정 시각</b>을 보여 줍니다. 방금 쓴 글의 시각과 다르거나 “글이 하나도 없어요” 경고가 나오면 <b>엉뚱한 <code>data</code></b> 를 백업한 것이니 위처럼 폴더를 지정해 다시 하세요. 그 <code>data</code> 가 없으면 “data 폴더를 찾을 수 없어요”라고 알려 주고 아무것도 만들지 않습니다.</li>
+        <li>사진·파일이 든 <code>uploads</code> 폴더를 다른 드라이브로 옮겨 바로가기(링크)로 연결했어도 그대로 따라가서 백업하고, 그렇다고 알려 줍니다(경고로 취급 — 종료 코드 2). 업로드 파일 <b>하나</b>가 바로가기이거나 다른 프로그램이 잠그고 있으면 그 파일만 건너뛰고 알려 줍니다.</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>복원 방법 — 손으로 <small style="font-weight:400">(화면의 <b>불러오기</b>를 쓸 수 없을 때. <code>BACKUP-INFO.txt</code> 에도 같은 내용이 있어요)</small></h3>
+      <p><b><code>BACKUP-INFO.txt</code> 가 있는 정상 이름(<code>edulet-날짜-시간</code>)의 폴더만 쓰세요.</b> 이름 끝에 <code>.partial</code> 이 붙은 폴더는 중간에 끊긴 것이니 쓰지 말고 지워도 됩니다.</p>
+      <ol>
+        <li>서버를 끕니다(서버 창을 닫기).</li>
+        <li>지금의 <code>data</code> 폴더를 따로 옮겨 둡니다(지우지 말고 이름만 바꾸거나 다른 곳으로).</li>
+        <li>새 <code>data</code> 폴더를 만들고, 백업 폴더의 <code>edulet.db</code> 와 <code>uploads</code> 폴더를 그 안에 복사합니다.</li>
+        <li>새 <code>data</code> 폴더에 옛 <code>edulet.db-wal</code> · <code>edulet.db-shm</code> 파일이 있으면 <b>반드시 지웁니다</b>. (남아 있으면 다른 데이터베이스의 WAL 이 복원본에 다시 적용돼 데이터가 망가질 수 있어요.)</li>
+        <li><code>run.cmd</code> 로 서버를 켭니다. 다른 위치의 <code>data</code> 폴더를 쓰려면 환경변수 <code>EDULET_DATA_DIR</code> 로 그 폴더를 지정하세요.</li>
+      </ol>
+    </div>
+  </details>
+
+  <h2 id="export">5. 보드를 HTML 파일로 받아 두기 (인터넷 없이 보기)</h2>
+  <p>보드를 <b>파일 하나</b>로 내려받아 두면, <b>인터넷이나 서버가 없어도</b> 그 파일을 더블클릭해 브라우저로 볼 수 있어요. 글·댓글·반응·그림·첨부 파일이 모두 들어갑니다(링크와 유튜브 같은 영상은 주소만 들어가서, 눌러 보려면 인터넷이 필요해요). 수업 결과물을 보관하거나, 메일·USB 로 건넬 때 좋아요. <b>인터넷 없는 교실에서 보려면 미리 이 파일을 USB 나 그 교실 PC 에 복사해 두세요.</b> 거기서는 파일만 더블클릭하면 됩니다. (되돌리기용은 아니에요 — 되돌리기는 위의 4번.)</p>
+  <ol class="steps">
+    <li><b>내보내기 누르기</b> 보드 화면 위쪽의 <b>내보내기</b> → <b>HTML 파일 (오프라인)</b>. (내 보드 목록에서는 보드 카드의 메뉴 → <b>HTML 로 내보내기</b>. 이쪽은 옵션 없이 바로 만들어요.)</li>
+    <li><b>옵션 고르기</b> <b>그림 크기</b>는 ‘줄여서(권장)’면 파일이 작아져요. <b>첨부 파일(PDF 등)도 담기</b> 는 체크한 채로 두세요.</li>
+    <li><b>파일 열기</b> 진행 막대가 끝나면 브라우저의 다운로드 폴더(보통 ‘다운로드’)에 <code>edulet-…-날짜.html</code> 파일이 생겨요(브라우저에 뜨는 다운로드 표시를 눌러도 열려요). 더블클릭하면 브라우저에서 열립니다.</li>
+  </ol>
+  <div class="box">
+    <h3>알아 두세요</h3>
+    <ul>
+      <li><b>사진 찍어 둔 것처럼 그 순간의 모습이에요.</b> 파일 안에서 글을 쓰거나 실시간으로 바뀌지는 않고, 다시 보드로 불러올 수도 없어요. (카드를 자유롭게 놓는 ‘캔버스’ 보드는 위치가 담기지 않고 읽는 순서대로 격자에 늘어놓아요.)</li>
+      <li><b>보낼 때는 조심하세요.</b> 이름·글·그림이 모두 들어 있어요. 그림은 ‘줄여서’일 때 촬영 위치 같은 정보가 빠지고, ‘원본 크기’일 때는 그대로 들어가요. 보드를 볼 수 있는 사람이면 학생도 자기 기기에서 내려받을 수 있고(자기에게 보이는 글만 담겨요), 관리 권한이 있는 사람이 내보내면 승인을 기다리는 글도 담겨요.</li>
+      <li><b>열어도 안전해요.</b> 파일에는 실행되는 프로그램이 들어 있지 않고 열 때 저절로 인터넷에 접속하지도 않아서, 학생이 쓴 내용이 있어도 열 때 위험하지 않아요.</li>
+      <li><b>그림이 많으면 파일이 커져요.</b> 너무 크면 메일에는 첨부하기 어려울 수 있어요. 아주 큰 첨부는 담기지 않고 무엇이 빠졌는지 파일 안에 적어 둬요. 글만으로도 너무 크면 보드를 나눠서 내보내 달라고 안내해요.</li>
+    </ul>
+  </div>
+  <p>엑셀로 보고 싶다면 같은 곳의 <b>CSV 파일 (엑셀)</b>, 데이터 그대로는 <b>JSON 파일</b>을 받으세요(읽기용이고 다시 불러오기는 안 돼요). 같은 서버 안에서 보드를 통째로 복사하는 것은 <b>복제</b>입니다.</p>
+
+  <h2>6. 알아 두기</h2>
   <ul>
     <li><b>권한</b>: 공유 창에서 <b>공개 범위</b>가 “링크가 있는 누구나”여야 로그인 없이 들어오고, <b>링크 권한</b>(댓글 달기/글쓰기)으로 올릴 수 있는 범위를 정합니다.</li>
-    <li><b>데이터</b>: <code>data</code> 폴더 안에 저장됩니다(보드·글·사진) — 백업·복원은 위 <b>4번</b>.</li>
+    <li><b>데이터</b>: <code>data</code> 폴더 안에 저장됩니다(보드·글·사진) — 저장하기·불러오기는 위 <b><a href="#save">4번</a></b>, 파일로 내려받기는 <b><a href="#export">5번</a></b>.</li>
     <li><b>입장 폭주</b>: 한꺼번에 많이 들어오면 “N초 뒤에 자동으로 다시 시도해요”가 뜨고 알아서 입장합니다.</li>
   </ul>
   <details>
@@ -141,7 +222,7 @@
     <pre>EDULET_PUBLIC_URL=https://edulet.example.com
 EDULET_TRUST_PROXY=1
 EDULET_COOKIE_SECURE=1</pre>
-    <p>(Windows 명령 프롬프트는 줄마다 <code>set 이름=값</code> 한 뒤 <code>npm start</code>.) 인터넷에 공개하면 누구나 링크로 들어올 수 있으니 <b>공개 범위·링크 권한</b>을 꼭 확인하세요. 자세한 설정은 저장소 README 의 “다른 PC 와 함께 쓰기”.</p>
+    <p>(Windows 명령 프롬프트는 줄마다 <code>set 이름=값</code> 한 뒤 <code>npm start</code>.) 인터넷에 공개하면 누구나 링크로 들어올 수 있으니 <b>공개 범위·링크 권한</b>을 꼭 확인하세요. 이렇게 공개한 서버에서는 <b>저장하기·불러오기 메뉴가 나오지 않아요</b>(위 4번). 자세한 설정은 저장소 README 의 “다른 PC 와 함께 쓰기”.</p>
   </details>
 
   <p class="foot">Edulet · 이 안내서는 한 파일(<code>docs/server-mode.html</code>)로 되어 있어 내려받아 브라우저로 열거나 인쇄해도 됩니다.</p>
